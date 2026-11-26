@@ -1,143 +1,67 @@
-<p align="center">
-  <a href="https://tauric.ai/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="assets/tauric-logo-dark.svg">
-      <img src="assets/tauric-logo.svg" alt="Tauric Research" width="60%">
-    </picture>
-  </a>
-</p>
+# QuantForge AI Pro
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2412.20138"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2412.20138-B31B1B?logo=arxiv"/></a>
-  <a href="https://x.com/TauricResearch"><img alt="X" src="https://img.shields.io/badge/X-TauricResearch-white?logo=x&amp;logoColor=white"/></a>
-  <a href="https://github.com/TauricResearch/"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-TauricResearch-14C290?logo=github&amp;logoColor=white"/></a>
-  <a href="https://www.youtube.com/@TauricResearch"><img alt="YouTube" src="https://img.shields.io/badge/YouTube-TauricResearch-FF0000?logo=youtube&amp;logoColor=white"/></a>
-  <a href="https://tauric.ai/"><img alt="Website" src="https://img.shields.io/badge/Website-tauric.ai-14C290?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIi8+PHBhdGggZD0iTTIgMTJoMjBNMTIgMmExNSAxNSAwIDAgMSAwIDIwTTEyIDJhMTUgMTUgMCAwIDAgMCAyMCIvPjwvc3ZnPg=="/></a>
-</p>
+An autonomous, multi-agent quantitative trading system for **XAUUSD (spot gold)**. It is built on the
+TradingAgents research framework and runs natively on **Android Termux**. It ships in **PAPER mode**:
+it trades a simulated USD 1,000 account against real Twelve Data prices and never sends an order to a
+broker.
 
-<p align="center">
-  <a href="https://tauric.ai/"><img alt="TradingAgents #1 Repository of the Day" src="https://trendshift.io/api/badge/repositories/16192" width="250" height="55"/></a>
-</p>
+> QuantForge looks for statistical edges and refuses to trade without one. On the real XAU/USD history
+> tested so far (1 year of 15-minute bars and 3 years of hourly bars), **no strategy passed validation**,
+> so the system's decision is NO TRADE. That is the correct outcome, not a defect. See
+> [docs/quantforge/VALIDATION_REPORT.md](docs/quantforge/VALIDATION_REPORT.md).
 
-<p align="center">
-  <a href="https://tauricresearch.github.io/TradingAgents/">English</a> |
-  <a href="https://tauricresearch.github.io/TradingAgents/de/">Deutsch</a> |
-  <a href="https://tauricresearch.github.io/TradingAgents/es/">Español</a> |
-  <a href="https://tauricresearch.github.io/TradingAgents/fr/">français</a> |
-  <a href="https://tauricresearch.github.io/TradingAgents/ja/">日本語</a> |
-  <a href="https://tauricresearch.github.io/TradingAgents/ko/">한국어</a> |
-  <a href="https://tauricresearch.github.io/TradingAgents/pt/">Português</a> |
-  <a href="https://tauricresearch.github.io/TradingAgents/ru/">Русский</a> |
-  <a href="https://tauricresearch.github.io/TradingAgents/zh/">中文</a>
-</p>
+## What it does
 
-<h1 align="center">TradingAgents: Towards Agentic Finance Research</h1>
+| Layer        | What it does                                                                                                                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Market data  | Twelve Data (primary), Yahoo futures proxy (display only), CSV import. Symbol mapping and capability checks, priority fallback with circuit breakers, an API credit budget, UTC normalization, closed-candle checks, duplicate/missing/stale-quote detection. Missing bars are never filled with invented values.                                       |
+| Intelligence | 10 agents (Quant Research, Macro Intelligence, Market Regime, Strategy Research, Price Action, Volatility, Liquidity, Risk Management, Execution Intelligence, AI Judge). Each report carries evidence ids, a confidence and an optional veto. An optional LLM review goes through the original TradingAgents model providers and can only add caution. |
+| Regime       | Slope t-statistic + efficiency ratio trend states, ATR-percentile volatility levels, vol expansion/contraction, breakouts and liquidity traps. Evaluated against forward behaviour.                                                                                                                                                                     |
+| Discovery    | 7,200 candidates from 10 hypothesis families (displacement, sweeps, failed breakouts, squeezes, mean reversion, momentum persistence, session drives, streak asymmetry) × filters × exits.                                                                                                                                                              |
+| Validation   | Chronological train/validation/holdout split with segment-contained trades, Benjamini–Hochberg FDR, deflated Sharpe, anchored walk-forward with in-sample re-optimization, parameter stability, cost sensitivity, Monte Carlo and a bootstrap CI.                                                                                                       |
+| Decision     | Deterministic BUY / SELL / NO_TRADE with entry, stop, target, R:R, size, holding time, confidence, reasons and why each alternative was rejected.                                                                                                                                                                                                       |
+| Risk         | Risk-based sizing from the broker's contract spec, daily/weekly loss limits, max drawdown kill switch, loss-streak cooldown, exposure, spread/slippage/volatility gates, session close and weekend handling. The risk engine has the final say.                                                                                                         |
+| Execution    | Broker adapter contract, an idempotent order manager, reconciliation, a paper broker with modelled bid/ask, slippage, commission, swap, partials, break-even, trailing and time exits, and a transaction ledger. Live trading is gated and has no adapter.                                                                                              |
+| Platform     | SQLite via `node:sqlite` (no native build), a mobile dashboard with 14 pages, SSE plus polling, token login, a scheduler, a watchdog, backups (optionally encrypted) and Termux scripts.                                                                                                                                                                |
 
-<p align="center">
-  <img src="assets/demo.gif" alt="TradingAgents researching a question in the terminal" width="100%">
-</p>
-
-## Quick start
-
-**1. Get an API key**
-
-- Sign up at [Tauric Research](https://tauric.ai/signup).
-- Create your [Tauric API key](https://tauric.ai/settings/api-keys).
-
-**2. Install**
+## Quick start (Android Termux)
 
 ```bash
-curl -fsSL https://tauric.ai/tradingagents/install.sh | sh
+pkg install -y nodejs-lts unzip
+unzip QUANTFORGE_AI_PRO_TERMUX.zip -d ~ && cd ~/QUANTFORGE_AI_PRO
+./install.sh          # dependencies + setup wizard (asks for your Twelve Data key)
+./start.sh            # starts the daemon; open http://127.0.0.1:8787/ in Chrome
+./status.sh  ./stop.sh  ./restart.sh  ./healthcheck.sh  ./backup.sh  ./restore.sh <file>  ./update.sh
 ```
 
-Or with npm: `npm i -g @tauric/tradingagents`
-
-**3. Run**
-
-```bash
-tradingagents
-```
-
-Start your agentic finance research with Tauric!
-
-## Models
-
-| Provider                                        | Needs                                      |
-| ----------------------------------------------- | ------------------------------------------ |
-| Tauric AI                                       | [Tauric API key](https://tauric.ai/signup) |
-| OpenAI, Anthropic, Google, DeepSeek, OpenRouter | their API key                              |
-| Self-hosted models (vLLM, Ollama)               | its address and model                      |
-| AI subscriptions (ChatGPT)                      | `tradingagents login chatgpt`              |
-
-With another provider, `/login` adds a Tauric API key for filings, statements and news. See
-[docs/models.md](docs/models.md).
-
-## Usage
-
-Type a question and press Enter. Every figure in the answer is marked with its source, and a numbered list of
-sources follows.
-
-| Command   | Does                                                             |
-| --------- | ---------------------------------------------------------------- |
-| `/`       | Open the commands                                                |
-| `/model`  | Choose the model and how hard it reasons                         |
-| `/resume` | Resume an earlier session                                        |
-| `/export` | Save the last answer as a PDF report, or the session as Markdown |
-| `/copy`   | Copy the last answer                                             |
-| `/help`   | List every command and key                                       |
-
-Shift+Tab switches to plan mode, where the agent proposes a research plan first.
-
-## Architecture
-
-<p align="center">
-  <img src="assets/taxonomy.svg" alt="What TradingAgents can call on: the main agent's tools, its data and compute tools, its agents and its skills" width="100%">
-</p>
-
-## Agents and skills
-
-The main agent plans the research, reads what the question needs with its data tools, and works the numbers
-with its compute tools. For depth, it briefs specialist agents, each in its own context:
-
-| Agent           | Covers                                                                           |
-| --------------- | -------------------------------------------------------------------------------- |
-| Equity Research | a company's statements, filings, estimates, valuation, ownership and news        |
-| Macro Strategy  | growth, inflation, rates and the yield curve, credit, sectors, cross-asset moves |
-| Quant Research  | returns, volatility, drawdowns, correlation and beta, technical indicators       |
-| Risk Analysis   | what could make a position lose, and what would show it early                    |
-
-For a known kind of research it follows a skill:
-
-| Area      | Skills                                                                                 |
-| --------- | -------------------------------------------------------------------------------------- |
-| Companies | company snapshot, earnings preview and review, filing review, full analysis            |
-| Valuation | DCF, relative valuation, scenario analysis                                             |
-| Markets   | macro outlook, market brief, performance comparison, sector review, technical analysis |
-| Risk      | portfolio review, risk assessment, thesis review                                       |
-
-You can add your own agents and skills as Markdown files ([docs/usage.md](docs/usage.md)). TradingAgents researches
-and answers; it does not place trades.
+The full Turkish guide is [docs/quantforge/KURULUM_TR.md](docs/quantforge/KURULUM_TR.md).
 
 ## Documentation
 
-- [Install](docs/install.md): the installer, npm, release files and updates.
-- [Usage](docs/usage.md): the terminal, one-off questions, sessions, agents and skills, sources, sync and limits.
-- [Models](docs/models.md): providers, keys, reasoning and OpenAI-compatible servers.
-- [Configuration](docs/configuration.md): files and environment variables.
+- [Turkish installation guide (Kurulum)](docs/quantforge/KURULUM_TR.md)
+- [Architecture, repository audit and compatibility report](docs/quantforge/ARCHITECTURE.md)
+- [API and configuration guide](docs/quantforge/API_CONFIGURATION.md)
+- [Paper trading](docs/quantforge/PAPER_TRADING.md)
+- [Controlled live trading preparation](docs/quantforge/LIVE_TRADING_PREPARATION.md)
+- [Troubleshooting](docs/quantforge/TROUBLESHOOTING.md)
+- [Validation and test report](docs/quantforge/VALIDATION_REPORT.md)
+- Original framework: [docs/TRADINGAGENTS_README.md](docs/TRADINGAGENTS_README.md). Its CLI is preserved as
+  `tradingagents` and is also reachable through `quantforge research "<question>"`.
 
-To report an issue or open a pull request, see [CONTRIBUTING.md](CONTRIBUTING.md); to report a security problem, [SECURITY.md](SECURITY.md).
+## Development
 
-## Citation
-
-```bibtex
-@article{xiao2024tradingagents,
-  title={TradingAgents: Multi-agents LLM financial trading framework},
-  author={Xiao, Yijia and Sun, Edward and Luo, Di and Wang, Wei},
-  journal={arXiv preprint arXiv:2412.20138},
-  year={2024}
-}
+```bash
+npm ci
+npm run build          # tsc + dashboard assets → dist/
+npm run build:portable # same with the pure-JS TypeScript 5.9 compiler (works on Android)
+npm run typecheck && npm run lint
+npm test               # unit + integration + e2e (91 tests)
+QF_LIVE_TESTS=1 node --test build/test/tests/integration/twelvedata.live.test.js   # real API
 ```
 
-## License
+## Disclaimer
+
+This is research and paper-trading software. Past and simulated performance does not predict future
+results. Nothing here is investment advice.
 
 Apache-2.0. See [LICENSE](LICENSE).

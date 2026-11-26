@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Update QuantForge: backup, fetch the new version (git pull or a release ZIP), reinstall dependencies,
+# rebuild if needed and restart if it was running. Database migrations run automatically at start.
+#   ./update.sh                  git pull --ff-only (in a git checkout)
+#   ./update.sh <release.zip>    unpack a new QUANTFORGE_AI_PRO_TERMUX.zip over this directory
+. "$(dirname "$0")/scripts/termux/common.sh"
+was_running=0
+if running_pid >/dev/null; then was_running=1; fi
+if [ -f "$CLI" ] && [ -f "$QF_HOME/quantforge.db" ]; then qf backup || die "backup failed; update aborted"; fi
+[ "$was_running" = 1 ] && "$APP_DIR/stop.sh"
+cd "$APP_DIR" || exit 1
+if [ $# -ge 1 ]; then
+  command -v unzip >/dev/null 2>&1 || die "unzip not found (Termux: pkg install unzip)"
+  tmp="$(mktemp -d)"
+  unzip -q "$1" -d "$tmp" || die "could not unpack $1"
+  src="$tmp"
+  [ -d "$tmp/QUANTFORGE_AI_PRO" ] && src="$tmp/QUANTFORGE_AI_PRO"
+  cp -R "$src"/. "$APP_DIR"/ || die "copy failed"
+  rm -rf "$tmp"
+  # Release archives ship a prebuilt dist/: runtime dependencies only.
+  npm ci --omit=dev --ignore-scripts --no-audit --no-fund || die "npm ci failed"
+elif [ -d .git ]; then
+  git pull --ff-only || die "git pull failed"
+  # A git checkout has no dist/: build with the portable (pure JavaScript) TypeScript compiler.
+  npm ci --ignore-scripts --no-audit --no-fund || die "npm ci failed"
+  npm run build:portable || die "build failed"
+else
+  die "not a git checkout; pass a release ZIP: ./update.sh QUANTFORGE_AI_PRO_TERMUX.zip"
+fi
+say "Updated."
+[ "$was_running" = 1 ] && "$APP_DIR/start.sh"
+exit 0

@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "symbol": "XAUUSD",
+  "mode": "paper",
+  "data": {
+    "providers": [
+      {
+        "id": "twelvedata",
+        "enabled": true,
+        "priority": 1,
+        "symbol": "XAU/USD",
+        "basis": "spot",
+        "useForTrading": true,
+        "websocket": false
+      },
+      {
+        "id": "yahoo",
+        "enabled": false,
+        "priority": 5,
+        "symbol": "GC=F",
+        "basis": "futures_proxy",
+        "useForTrading": false
+      },
+      {
+        "id": "csv",
+        "enabled": false,
+        "priority": 9,
+        "symbol": "XAUUSD",
+        "basis": "spot",
+        "useForTrading": true,
+        "csvDir": "import"
+      }
+    ],
+    "decisionTf": "15m",
+    "monitorTf": "5m",
+    "apiBudget": {
+      "perMinute": 8,
+      "perDay": 800,
+      "reserve": 60
+    },
+    "backfillDays": {
+      "5m": 15,
+      "15m": 365,
+      "1h": 1095
+    },
+    "closeLagMs": 20000,
+    "staleAfterBars": 3,
+    "macroSymbols": ["EUR/USD", "XAG/USD"],
+    "retentionDays": {
+      "5m": 60,
+      "15m": 1500,
+      "1h": 3000
+    },
+    "requestTimeoutMs": 15000
+  },
+  "instrument": {
+    "contractSize": 100,
+    "tickSize": 0.01,
+    "minLot": 0.01,
+    "lotStep": 0.01,
+    "maxLot": 5,
+    "leverage": 100,
+    "brokerName": "generic (configure to match your broker)"
+  },
+  "costs": {
+    "spread": 0.35,
+    "slippage": 0.05,
+    "commissionPerLotRoundTrip": 7,
+    "swapLongPerLotNight": -45,
+    "swapShortPerLotNight": -10
+  },
+  "risk": {
+    "profile": "balanced",
+    "initialBalance": 1000,
+    "riskPerTradePct": 1,
+    "maxDailyLossPct": 3,
+    "maxWeeklyLossPct": 6,
+    "maxDrawdownPct": 15,
+    "maxOpenPositions": 2,
+    "maxCorrelatedRiskPct": 2,
+    "maxConsecutiveLosses": 4,
+    "cooldownHours": 24,
+    "maxTradesPerDay": 5,
+    "maxSpread": 0.8,
+    "maxSlippage": 0.5,
+    "minAtrPercentile": 0.03,
+    "maxAtrPercentile": 0.98,
+    "minRewardRisk": 1,
+    "noTradeMinutesBeforeClose": 30,
+    "closeBeforeWeekend": true,
+    "maxMarginUsePct": 50
+  },
+  "decision": {
+    "minConfidence": 0.55,
+    "maxSignalAgeBars": 1
+  },
+  "discovery": {
+    "trainFrac": 0.6,
+    "validFrac": 0.2,
+    "minTrainTrades": 30,
+    "minValidTrades": 12,
+    "minTestTrades": 8,
+    "fdrQ": 0.1,
+    "minDsr": 0.9,
+    "mcIterations": 1000,
+    "maxActive": 3,
+    "autoActivate": true,
+    "intervalDays": 7,
+    "walkForwardFolds": 4
+  },
+  "agents": {
+    "timeoutMs": 2000,
+    "llm": {
+      "enabled": false,
+      "provider": "anthropic",
+      "model": "claude-sonnet-5-5",
+      "timeoutMs": 45000,
+      "maxCallsPerDay": 40
+    }
+  },
+  "dashboard": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "sessionHours": 12,
+    "allowRemote": false
+  },
+  "live": {
+    "enabled": false,
+    "broker": null,
+    "maxLots": 0.05
+  },
+  "scheduler": {
+    "enabled": true,
+    "backupHourUtc": 1,
+    "keepBackups": 14
+  }
+}

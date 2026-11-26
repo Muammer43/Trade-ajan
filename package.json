@@ -2,25 +2,33 @@
   "name": "tradingagents",
   "version": "1.0.1",
   "private": true,
-  "description": "TradingAgents: Towards Agentic Finance Research",
+  "description": "TradingAgents research framework + QuantForge AI Pro: autonomous XAUUSD multi-agent quantitative trading (paper mode by default)",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "bin": {
-    "tradingagents": "dist/cli/main.js"
+    "tradingagents": "dist/cli/main.js",
+    "quantforge": "dist/quantforge/cli/main.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
     "ci:install": "npm ci --ignore-scripts && node node_modules/bun/install.js",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "compile": "npm run build && bun scripts/compile.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p scripts/tsconfig.json",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "build:portable": "node node_modules/typescript-js/bin/tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && node --test --test-concurrency=1 \"build/test/tests/**/*.test.js\"",
+    "test:unit": "npm run build:test && node --test \"build/test/tests/unit/**/*.test.js\"",
+    "test:integration": "npm run build:test && node --test --test-concurrency=1 \"build/test/tests/integration/**/*.test.js\"",
+    "test:e2e": "npm run build:test && node --test --test-concurrency=1 \"build/test/tests/e2e/**/*.test.js\"",
+    "quantforge": "node dist/quantforge/cli/main.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.8",
@@ -30,7 +38,8 @@
     "@types/react": "19.3.0",
     "@types/semver": "7.8.0",
     "bun": "1.4.5",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "typescript-js": "npm:typescript@5.9.3"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.106",

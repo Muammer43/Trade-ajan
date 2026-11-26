@@ -152,9 +152,21 @@ async function isStale(holder: Holder): Promise<boolean> {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ESRCH";
   }
+  // A zombie (exited, not yet reaped by its parent) holds nothing: its lock is stale.
+  if (await isZombie(holder.pid)) return true;
   // Alive: the holder only if it started when the lock says (when both times are known).
   const now = (await startedOf(holder.pid)).started;
   return holder.started !== undefined && now !== undefined && now !== holder.started;
+}
+
+/** Whether the process has exited but was not yet reaped (state Z in /proc, where the system has it). */
+async function isZombie(pid: number): Promise<boolean> {
+  try {
+    const stat = await fs.readFile(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z");
+  } catch {
+    return false;
+  }
 }
 
 /** When a process started, in the system's ticks since boot, where the system says (Linux). */
