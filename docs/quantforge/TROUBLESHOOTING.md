@@ -2,6 +2,7 @@
 
 | Symptom                                                | Cause / fix                                                                                                                                                                                            |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `EACCES: permission denied, link … quantforge.lock`    | Android forbids hard links in app storage. Fixed in this release (the lock falls back to an exclusive create). Update with `./update.sh QUANTFORGE_AI_PRO_TERMUX.zip`.                                 |
 | `node:sqlite is unavailable`                           | Node.js older than 22.13. Termux: `pkg install nodejs-lts` (or `pkg install nodejs`). Check with `node -e "require('node:sqlite')"`.                                                                   |
 | `npm ci` fails on Termux                               | Use `./install.sh`: it installs with `--omit=dev --ignore-scripts`, so dev tools without Android binaries (TypeScript 7, bun, biome) are never needed. Make sure the release `dist/` folder exists.    |
 | Need to rebuild on the phone                           | `npm ci --ignore-scripts && npm run build:portable` (pure-JS TypeScript 5.9).                                                                                                                          |

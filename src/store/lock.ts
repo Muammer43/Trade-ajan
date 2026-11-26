@@ -76,13 +76,45 @@ async function publish(path: string, holder: Holder): Promise<boolean> {
       await fs.link(draft, path);
       return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") return false;
+      // Android (Termux) forbids hard links in app storage, as do some file systems: fall back to creating
+      // the lock exclusively in place. Its contents then appear a moment after the file; a reader that
+      // finds it empty treats it as unreadable and never takes it.
+      if (
+        code === "EACCES" ||
+        code === "EPERM" ||
+        code === "ENOTSUP" ||
+        code === "EOPNOTSUPP" ||
+        code === "ENOSYS" ||
+        code === "EXDEV"
+      ) {
+        return publishInPlace(path, holder);
+      }
       throw error;
     }
   } finally {
     await handle.close().catch(() => {});
     await fs.rm(draft, { force: true });
   }
+}
+
+/** Create the lock file exclusively (O_EXCL) and write its holder; false when a lock is already there. */
+async function publishInPlace(path: string, holder: Holder): Promise<boolean> {
+  let handle: fs.FileHandle;
+  try {
+    handle = await fs.open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    await handle.writeFile(JSON.stringify(holder));
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  return true;
 }
 
 /** Remove the lock at `path` if its holder's token is still `token`; only that holder or a breaker calls this. */

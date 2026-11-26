@@ -10,7 +10,7 @@ emir göndermez.
 | Gereksinim               | Açıklama                                                                                                     |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------ |
 | Android 7+               | 64-bit (arm64) önerilir. En az 3 GB RAM ve 500 MB boş alan.                                                  |
-| Termux                   | **F-Droid** veya GitHub sürümü kullanın. Play Store sürümü eskidir ve paket kurulumu çalışmaz.               |
+| Termux                   | F-Droid, GitHub veya güncel Google Play sürümü (googleplay.2026.x ile denendi).                              |
 | Node.js 22.13+           | `pkg install nodejs-lts` ile kurulur. `node:sqlite` modülü bu sürümle gelir.                                 |
 | Twelve Data API anahtarı | <https://twelvedata.com> adresinden ücretsiz alınabilir. Ücretsiz/basic plan: 8 kredi/dakika, 800 kredi/gün. |
 | Chrome                   | Panel (dashboard) telefonun tarayıcısında açılır.                                                            |
