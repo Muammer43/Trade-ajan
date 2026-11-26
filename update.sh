@@ -6,8 +6,20 @@
 . "$(dirname "$0")/scripts/termux/common.sh"
 was_running=0
 if running_pid >/dev/null; then was_running=1; fi
-if [ -f "$CLI" ] && [ -f "$QF_HOME/quantforge.db" ]; then qf backup || die "backup failed; update aborted"; fi
 [ "$was_running" = 1 ] && "$APP_DIR/stop.sh"
+if [ -f "$QF_HOME/quantforge.db" ]; then
+  # The application is stopped, so a plain copy is consistent. The CLI backup is tried first; if it cannot
+  # run (for example a config.json written for the newer version), the files are copied directly.
+  if ! { [ -f "$CLI" ] && qf backup; }; then
+    mkdir -p "$QF_HOME/backups"
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    for f in quantforge.db quantforge.db-wal quantforge.db-shm; do
+      [ -f "$QF_HOME/$f" ] && cp "$QF_HOME/$f" "$QF_HOME/backups/pre-update-$stamp-$f"
+    done
+    chmod 600 "$QF_HOME"/backups/pre-update-"$stamp"-* 2>/dev/null || true
+    say "Database copied to $QF_HOME/backups/pre-update-$stamp-quantforge.db"
+  fi
+fi
 cd "$APP_DIR" || exit 1
 if [ $# -ge 1 ]; then
   command -v unzip >/dev/null 2>&1 || die "unzip not found (Termux: pkg install unzip)"
