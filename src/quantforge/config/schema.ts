@@ -120,6 +120,20 @@ export const configSchema = z
         autoActivate: z.boolean(),
         intervalDays: z.number().min(1).max(90),
         walkForwardFolds: z.number().int().min(2).max(10),
+        /** "strict" (default) or "relaxed" (exploratory: more false positives; paper only). */
+        profile: z.enum(["strict", "relaxed", "custom"]),
+        trainMinExpectancyR: z.number().min(0).max(2),
+        trainMinProfitFactor: z.number().min(1).max(5),
+        maxTopTradeShare: z.number().min(0.05).max(1),
+        validMinProfitFactor: z.number().min(1).max(5),
+        wfMinPositiveFrac: z.number().min(0).max(1),
+        minStability: z.number().min(0).max(1),
+        costStressMultiplier: z.number().min(1).max(3),
+        minMcProbProfit: z.number().min(0.5).max(1),
+        /** Two-sided alpha of the expectancy bootstrap CI whose lower bound must exceed zero. */
+        ciAlpha: z.number().min(0.01).max(0.5),
+        /** Use only the most recent N days of history for discovery (0 = all stored history). */
+        lookbackDays: z.number().int().min(0).max(5000),
       })
       .strict(),
     agents: z
@@ -263,6 +277,17 @@ export const DEFAULT_CONFIG: QuantForgeConfig = {
     autoActivate: true,
     intervalDays: 7,
     walkForwardFolds: 4,
+    profile: "strict",
+    trainMinExpectancyR: 0.05,
+    trainMinProfitFactor: 1.15,
+    maxTopTradeShare: 0.35,
+    validMinProfitFactor: 1.05,
+    wfMinPositiveFrac: 0.6,
+    minStability: 0.6,
+    costStressMultiplier: 1.5,
+    minMcProbProfit: 0.9,
+    ciAlpha: 0.1,
+    lookbackDays: 0,
   },
   agents: {
     timeoutMs: 2000,
@@ -303,6 +328,45 @@ export const RISK_PROFILES: Record<"conservative" | "balanced", Partial<QuantFor
   },
 };
 
+/**
+ * Discovery gate presets. "relaxed" is exploratory: it lets weaker, less certain candidates through and so
+ * admits more strategies that only looked good by chance. Use it in paper mode only.
+ */
+export const DISCOVERY_PROFILES: Record<"strict" | "relaxed", Partial<QuantForgeConfig["discovery"]>> = {
+  strict: {
+    minTrainTrades: 30,
+    minValidTrades: 12,
+    minTestTrades: 8,
+    fdrQ: 0.1,
+    minDsr: 0.9,
+    trainMinExpectancyR: 0.05,
+    trainMinProfitFactor: 1.15,
+    maxTopTradeShare: 0.35,
+    validMinProfitFactor: 1.05,
+    wfMinPositiveFrac: 0.6,
+    minStability: 0.6,
+    costStressMultiplier: 1.5,
+    minMcProbProfit: 0.9,
+    ciAlpha: 0.1,
+  },
+  relaxed: {
+    minTrainTrades: 20,
+    minValidTrades: 8,
+    minTestTrades: 5,
+    fdrQ: 0.3,
+    minDsr: 0.5,
+    trainMinExpectancyR: 0.02,
+    trainMinProfitFactor: 1.05,
+    maxTopTradeShare: 0.5,
+    validMinProfitFactor: 1.0,
+    wfMinPositiveFrac: 0.5,
+    minStability: 0.4,
+    costStressMultiplier: 1.25,
+    minMcProbProfit: 0.75,
+    ciAlpha: 0.3,
+  },
+};
+
 type Plain = Record<string, unknown>;
 function isPlain(v: unknown): v is Plain {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -324,6 +388,15 @@ export function buildConfig(partial: unknown): { config: QuantForgeConfig } | { 
     (merged as QuantForgeConfig).risk = {
       ...(merged as QuantForgeConfig).risk,
       ...RISK_PROFILES[profile],
+      ...explicit,
+    };
+  }
+  const dprofile = (merged as QuantForgeConfig).discovery?.profile;
+  if (dprofile === "strict" || dprofile === "relaxed") {
+    const explicit = isPlain(partial) && isPlain(partial.discovery) ? partial.discovery : {};
+    (merged as QuantForgeConfig).discovery = {
+      ...(merged as QuantForgeConfig).discovery,
+      ...DISCOVERY_PROFILES[dprofile],
       ...explicit,
     };
   }

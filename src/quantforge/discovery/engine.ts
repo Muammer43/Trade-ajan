@@ -162,9 +162,9 @@ export function runDiscovery(
       const reasons: string[] = [];
       if (m.trades < d.minTrainTrades) reasons.push("insufficient_train_sample");
       else {
-        if (m.expectancyR <= 0.05) reasons.push("train_expectancy_too_low");
-        if (m.profitFactor < 1.15) reasons.push("train_profit_factor_too_low");
-        if (m.topTradeShare > 0.35) reasons.push("train_depends_on_few_trades");
+        if (m.expectancyR <= d.trainMinExpectancyR) reasons.push("train_expectancy_too_low");
+        if (m.profitFactor < d.trainMinProfitFactor) reasons.push("train_profit_factor_too_low");
+        if (m.topTradeShare > d.maxTopTradeShare) reasons.push("train_depends_on_few_trades");
       }
       report.gates.push({
         gate: "A_train",
@@ -200,7 +200,7 @@ export function runDiscovery(
     if (v.trades < d.minValidTrades) reasons.push("insufficient_validation_sample");
     else {
       if (v.expectancyR <= 0) reasons.push("validation_expectancy_not_positive");
-      if (v.profitFactor < 1.05) reasons.push("validation_profit_factor_too_low");
+      if (v.profitFactor < d.validMinProfitFactor) reasons.push("validation_profit_factor_too_low");
       if (!bh[k]) reasons.push("not_significant_after_fdr");
     }
     p.report.gates.push({
@@ -274,7 +274,8 @@ export function runDiscovery(
       positiveFolds: positive,
       pooledExpectancyR: pooled.length ? mean(pooled.map((t) => t.netR)) : 0,
     };
-    const passD = positive >= Math.ceil(folds.length * 0.6) && r.walkForward.pooledExpectancyR > 0;
+    const passD =
+      positive >= Math.ceil(folds.length * d.wfMinPositiveFrac) && r.walkForward.pooledExpectancyR > 0;
     r.gates.push({
       gate: "D_walk_forward",
       passed: passD,
@@ -291,7 +292,7 @@ export function runDiscovery(
       profitable,
       ratio: neigh.length ? profitable / neigh.length : 0,
     };
-    const passE = r.stability.ratio >= 0.6;
+    const passE = r.stability.ratio >= d.minStability;
     r.gates.push({
       gate: "E_parameter_stability",
       passed: passE,
@@ -300,7 +301,9 @@ export function runDiscovery(
     if (!passE) reject(r, "parameter_instability");
     // F: cost sensitivity.
     const x15 = computeMetrics(
-      run(r.spec, ctx, seg.start, seg.validEnd, p.sides, { costs: { ...costs, multiplier: 1.5 } }),
+      run(r.spec, ctx, seg.start, seg.validEnd, p.sides, {
+        costs: { ...costs, multiplier: d.costStressMultiplier },
+      }),
     ).expectancyR;
     const x2 = computeMetrics(
       run(r.spec, ctx, seg.start, seg.validEnd, p.sides, { costs: { ...costs, multiplier: 2 } }),
@@ -310,7 +313,7 @@ export function runDiscovery(
     r.gates.push({
       gate: "F_cost_sensitivity",
       passed: passF,
-      detail: `E at 1.5× costs=${x15.toFixed(3)}R, at 2×=${x2.toFixed(3)}R`,
+      detail: `E at ${d.costStressMultiplier}× costs=${x15.toFixed(3)}R, at 2×=${x2.toFixed(3)}R`,
     });
     if (!passF) reject(r, "fails_higher_costs");
     // G: Monte Carlo.
@@ -318,7 +321,7 @@ export function runDiscovery(
       iterations: d.mcIterations,
       riskFraction: config.risk.riskPerTradePct / 100,
     });
-    const passG = r.monteCarlo.probProfit >= 0.9;
+    const passG = r.monteCarlo.probProfit >= d.minMcProbProfit;
     r.gates.push({
       gate: "G_monte_carlo",
       passed: passG,
@@ -326,12 +329,12 @@ export function runDiscovery(
     });
     if (!passG) reject(r, "monte_carlo_probability_too_low");
     // H: bootstrap CI.
-    r.expectancyCi = expectancyCi(rs, 0.1);
+    r.expectancyCi = expectancyCi(rs, d.ciAlpha);
     const passH = r.expectancyCi.low > 0;
     r.gates.push({
       gate: "H_bootstrap_ci",
       passed: passH,
-      detail: `90% CI of expectancy [${r.expectancyCi.low.toFixed(3)}, ${r.expectancyCi.high.toFixed(3)}]R`,
+      detail: `${Math.round((1 - d.ciAlpha) * 100)}% CI of expectancy [${r.expectancyCi.low.toFixed(3)}, ${r.expectancyCi.high.toFixed(3)}]R`,
     });
     if (!passH) reject(r, "expectancy_ci_includes_zero");
     r.score = r.expectancyCi.low * Math.sqrt(cm.trades);
@@ -368,12 +371,13 @@ export function runDiscovery(
   const reports = survivors.map((p) => p.report).map((r) => jsonSafe(r));
   reports.sort((a, b) => (a.status === b.status ? b.score - a.score : a.status === "validated" ? -1 : 1));
   const validated = reports.filter((r) => r.status === "validated").length;
+  const profileNote = d.profile === "relaxed" ? " [relaxed gates]" : "";
   const conclusion =
     validated > 0
-      ? `${validated} strategies passed every gate, including the untouched holdout segment.`
+      ? `${validated} strategies passed every gate, including the untouched holdout segment${d.profile === "relaxed" ? " (RELAXED exploratory gates: higher risk that an edge is due to chance; paper only)" : ""}.`
       : passedValidation > 0
         ? `No strategy passed every robustness gate: ${passedValidation} confirmed out-of-sample but failed later gates. No statistically robust edge was demonstrated; the system will not trade.`
-        : `No strategy demonstrated a statistically robust edge after costs: ${passedTrain} of ${candidates} passed the training screen and none was confirmed out-of-sample with FDR control. The system will not trade.`;
+        : `No strategy demonstrated a statistically robust edge after costs: ${passedTrain} of ${candidates} passed the training screen and none was confirmed out-of-sample with FDR control. The system will not trade.${profileNote}`;
   return {
     bars: f.n,
     dataFrom: f.ts[0] as number,

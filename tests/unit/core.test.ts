@@ -125,6 +125,21 @@ describe("configuration", () => {
     assert.ok("config" in b && b.config.risk.riskPerTradePct === 0.5);
     assert.equal(DEFAULT_CONFIG.risk.profile, "balanced");
   });
+  it("applies discovery profiles, letting explicit values win", () => {
+    const relaxed = buildConfig({ discovery: { profile: "relaxed", minDsr: 0, lookbackDays: 1100 } });
+    assert.ok("config" in relaxed);
+    if ("config" in relaxed) {
+      assert.equal(relaxed.config.discovery.fdrQ, 0.3);
+      assert.equal(relaxed.config.discovery.minDsr, 0);
+      assert.equal(relaxed.config.discovery.lookbackDays, 1100);
+    }
+    const strict = buildConfig({});
+    assert.ok(
+      "config" in strict &&
+        strict.config.discovery.profile === "strict" &&
+        strict.config.discovery.minDsr === 0.9,
+    );
+  });
   it("parses env files", () => {
     assert.deepEqual(parseEnvFile("# c\nA=1\nB='two'\n bad line\nC=\"3\""), { A: "1", B: "two", C: "3" });
   });

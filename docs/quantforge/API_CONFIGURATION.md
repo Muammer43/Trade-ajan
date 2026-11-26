@@ -86,3 +86,21 @@ header `X-QF-Request: 1`.
 | GET    | `/api/overview`, `/api/market?tf=5m\|15m\|1h\|4h`, `/api/agents`, `/api/decisions`, `/api/strategies[/:id]`, `/api/discovery`, `/api/backtests`, `/api/paper`, `/api/trades`, `/api/positions`, `/api/risk`, `/api/performance`, `/api/providers`, `/api/logs?level=`, `/api/settings` | Page data                                  |
 | GET    | `/api/stream`                                                                                                                                                                                                                                                                          | Server-Sent Events (`update`, `heartbeat`) |
 | POST   | `/api/discovery/run`, `/api/lab/backtest`, `/api/strategies/:id/activate\|deactivate`, `/api/positions/:id/close`, `/api/positions/close-all`, `/api/risk/kill-switch {on, reason, flatten}`, `/api/settings`, `/api/regime/evaluate`, `/api/backup`, `/api/live/arm {phrase}`         | Actions                                    |
+
+## Discovery profiles
+
+`discovery.profile` is `strict` (default) or `relaxed`. Relaxed is exploratory and paper-only: FDR q 0.3,
+DSR ≥ 0.5, lower training/validation thresholds, 70% bootstrap CI, Monte Carlo P(profit) ≥ 0.75. It admits
+more strategies that only looked good by chance. Explicit values override the preset, for example:
+
+```json
+{
+  "discovery": { "profile": "relaxed", "minDsr": 0, "lookbackDays": 1100 },
+  "data": { "backfillDays": { "15m": 1100 } }
+}
+```
+
+`lookbackDays` limits discovery to the most recent N days (0 = all stored history). On 2026-11-26 this exact
+setting validated one volatility-compression breakout rule (three exit variants) on 3 years of XAU/USD 15m
+data: positive in train, validation and the untouched holdout, but with DSR 0.19–0.36, so chance cannot be
+ruled out. Its 2×ATR stop (about USD 15) needs about 2% risk at USD 1,000 equity to be tradable at 0.01 lot.

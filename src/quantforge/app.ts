@@ -457,9 +457,12 @@ export class QuantForgeApp {
     const tf = this.config.data.decisionTf;
     const runId = this.registry.startRun(tf);
     try {
+      // Optionally only the most recent `lookbackDays` of history (0 = everything stored).
+      const lookback = this.config.discovery.lookbackDays;
+      const since = lookback > 0 ? this.now() - lookback * 86_400_000 : 0;
       const bars = this.candles
-        .latest(CANONICAL, tf, 200_000)
-        .filter((c) => c.marketOpen && c.quality === "ok");
+        .latest(CANONICAL, tf, 400_000)
+        .filter((c) => c.ts >= since && c.marketOpen && c.quality === "ok");
       if (bars.length < 3000)
         throw new Error(
           `discovery needs at least 3000 clean ${tf} bars; ${bars.length} stored (run backfill first)`,
