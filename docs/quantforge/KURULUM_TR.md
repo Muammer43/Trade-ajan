@@ -1,6 +1,6 @@
-# QuantForge AI Pro — Ayrıntılı Türkçe Kurulum Kılavuzu (Android Termux)
+# QuantForge AI — Ayrıntılı Türkçe Kurulum Kılavuzu (Android Termux)
 
-Bu kılavuz QuantForge AI Pro'yu bir Android telefonda, **Termux** içinde, root yetkisi ve Docker olmadan
+Bu kılavuz QuantForge AI'yu bir Android telefonda, **Termux** içinde, root yetkisi ve Docker olmadan
 kurmayı ve çalıştırmayı adım adım anlatır. Sistem varsayılan olarak **yalnızca PAPER (kâğıt üzerinde)
 modda** çalışır: gerçek XAU/USD fiyatlarıyla 1.000 USD'lik sanal bir hesap işletir ve hiçbir aracı kuruma
 emir göndermez.
@@ -34,9 +34,9 @@ node -e "require('node:sqlite'); console.log('sqlite OK')"
 ZIP dosyasını telefona indirdiyseniz (ör. Download klasörü):
 
 ```bash
-cp /sdcard/Download/QUANTFORGE_AI_PRO_TERMUX.zip ~
-cd ~ && unzip QUANTFORGE_AI_PRO_TERMUX.zip
-cd ~/QUANTFORGE_AI_PRO
+cp /sdcard/Download/QUANTFORGE_AI_TERMUX.zip ~
+cd ~ && unzip QUANTFORGE_AI_TERMUX.zip
+cd ~/QUANTFORGE_AI
 ```
 
 Uygulamayı Termux'un kendi ev dizininde (`~`) tutun. `/sdcard` üzerinde çalıştırmayın: orada dosya
@@ -57,7 +57,7 @@ Betik şunları yapar:
 4. **İlk kurulum sihirbazını** çalıştırır ve şunları sorar:
    - Twelve Data API anahtarı (`~/.quantforge/credentials.env` dosyasına 600 izniyle yazılır)
    - Başlangıç bakiyesi (varsayılan 1000 USD)
-   - Risk profili (`balanced` = dengeli, `conservative` = temkinli)
+   - Risk profili (`balanced` = dengeli, işlem başı %0,5; `conservative` = temkinli, %0,25)
    - Panel portu (varsayılan 8787)
    - Aracı kurumunuzdaki tipik spread, lot başına komisyon ve kontrat büyüklüğü
 5. Panel erişim anahtarını (token) üretir ve ekrana yazar. Anahtar `~/.quantforge/dashboard-token`
@@ -96,10 +96,9 @@ Telefonda Chrome'u açın ve `http://127.0.0.1:8787/` adresine gidin. Erişim an
 cat ~/.quantforge/dashboard-token
 ```
 
-Panelin 14 sayfası vardır: Genel Bakış, Canlı Piyasa, AI Ajanları, Strateji Keşfi, Strateji Laboratuvarı,
-Backtest, Paper Trading, İşlem Geçmişi, Açık Pozisyonlar, Risk Yönetimi, Performans, Veri Sağlayıcıları,
-Sistem Günlükleri ve Ayarlar. Güncellemeler Server-Sent Events ile anlık gelir; bağlantı koparsa 15
-saniyelik yoklamaya geçer.
+Panelin 12 sayfası vardır: Dashboard, Live Market, Trading Signals, Active Positions, Trade History,
+Strategy Performance, AI Agents, Risk Management, Backtest, Data Providers, System Logs ve Settings. Güncellemeler
+Server-Sent Events ile anlık gelir; bağlantı koparsa 15 saniyelik yoklamaya geçer.
 
 Güvenlik: Panel yalnızca `127.0.0.1` adresini dinler. Başka cihazdan erişim için `config.json` içinde
 `dashboard.host` ve `dashboard.allowRemote: true` ayarlarını **bilerek** değiştirmeniz gerekir. Bunu
@@ -144,7 +143,7 @@ saklanır. Geri yüklemede SHA-256 sağlama toplamı ve SQLite bütünlüğü ko
 ## 9. Güncelleme
 
 ```bash
-./update.sh QUANTFORGE_AI_PRO_TERMUX.zip   # yeni sürüm ZIP'i ile
+./update.sh QUANTFORGE_AI_TERMUX.zip   # yeni sürüm ZIP'i ile
 ./update.sh                                # git ile kurduysanız (git pull)
 ```
 
@@ -163,17 +162,21 @@ Bu değişkenleri `~/.bashrc` dosyasına ekleyin. Değişkenler Termux:Boot beti
 
 ## 11. İlk çalıştırmada ne beklemeli?
 
-- Panelde **"No validated strategy is active"** uyarısı görmeniz normaldir. Sistem gerçek veride
-  istatistiksel olarak sağlam bir avantaj bulamadıkça işlem açmaz. Şu ana kadarki gerçek veri testlerinde
-  hiçbir strateji doğrulamayı geçemedi (bkz. VALIDATION_REPORT.md).
-- Her 15 dakikada bir karar kaydı oluşur. Çoğu "NO_TRADE" olacaktır ve bu beklenen davranıştır.
-- Keşif her 7 günde bir yenilenir. Panelden "Run discovery now" ile elle de başlatılabilir.
+- Bot her 15 dakikalık mum kapanışında bir karar verir. Çoğu karar **NO_TRADE** olur ve bu normaldir. Her
+  kararın gerekçesi **Trading Signals** sayfasında görünür.
+- **1.000 USD ve %0,5 riskte çoğu sinyal "position_size" nedeniyle reddedilir.** En küçük lot (0,01) bile
+  5 USD'lik risk bütçesini aşar. Bunu değiştirmek bilinçli bir karar gerektirir: işlem başı riski en fazla %1'e
+  çıkarmak veya paper başlangıç bakiyesini artırmak (`risk.initialBalance`). Bkz. BACKTEST_RAPORU.md.
+- Panelin **Backtest** sayfasından veya `node dist/quantforge/cli/main.js backtest --days 365` ile stratejinin
+  geçmiş performansını görebilirsiniz. Backtest, canlı işlem kurallarının aynısını çalıştırır.
+- Eski sürümden kalan `config.json` otomatik uyarlanır: keşif ayarları kaldırılır ve %1'in üzerindeki
+  risk %1'e indirilir. Uyarılar açılışta günlüğe yazılır.
 
 ## 12. Komut satırı özeti
 
 ```bash
 node dist/quantforge/cli/main.js help
-#  setup | run | status | doctor | backfill | discover | regime-eval | import-csv | backup | restore
+#  setup | run | status | doctor | backfill | backtest | regime-eval | import-csv | backup | restore
 #  backups | health | kill-switch on|off | close-all | live-status | tick | research "<soru>"
 ```
 

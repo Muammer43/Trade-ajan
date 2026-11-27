@@ -1,4 +1,4 @@
-// QuantForge AI Pro — shared domain types.
+// QuantForge AI — shared domain types.
 // Every price is in quote currency (USD) per troy ounce. Every timestamp is UTC epoch milliseconds,
 // and a candle's `ts` is its OPEN time.
 

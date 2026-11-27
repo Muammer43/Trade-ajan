@@ -1,6 +1,6 @@
-// Runs the specialist agents with time budgets and isolation, then the AI Judge.
+// Runs the five specialist agents with time budgets and isolation, then the AI Judge.
 // An agent that throws is reported as "error"; one that exceeds its time budget has its output discarded and
-// is reported as "timeout". Neither can block the decision or weaken risk protection.
+// is reported as "timeout". Neither can block the deterministic engine or weaken risk protection.
 
 import { withTimeout } from "../../core/util.js";
 import { DIRECTIONAL_WEIGHTS, SPECIALISTS } from "./agents.js";
@@ -56,15 +56,18 @@ export type JudgeResult = {
   llm: LlmVerdict | { skipped: string } | null;
 };
 
+/** Consensus below this (agents leaning against the signal) is a contradiction the judge rejects. */
+export const CONFLICT_THRESHOLD = -0.35;
+
 /**
- * The AI Judge. Confidence = strategy quality (from its validation) + 0.15 × directional consensus of the
- * agents with the proposed side, scaled down for imperfect data; any veto blocks the trade. An optional LLM
- * review can lower confidence (caution −0.1) or veto; it can never raise confidence.
+ * The AI Judge. Confidence = signal score / 100 + 0.1 × the directional consensus of the Quant, Market and
+ * Macro agents with the proposed side, scaled down for imperfect data. It rejects the trade when any agent
+ * vetoes or when the agents clearly contradict the signal. An optional LLM review can only lower confidence
+ * (caution) or veto, never raise it.
  */
 export async function judge(
   ctx: MarketContext,
   reports: AgentReport[],
-  quality: number,
   llm: LlmJudge | null,
   timeoutMs: number,
 ): Promise<JudgeResult> {
@@ -79,9 +82,14 @@ export async function judge(
     den += w * r.confidence;
   }
   const consensus = den > 0 ? num / den : 0;
-  const dataFactor = ctx.quality.fresh ? (ctx.quality.missingBars === 0 ? 1 : 0.85) : 0;
-  let confidence = side === 0 ? 0 : Math.max(0, Math.min(1, (quality + 0.15 * consensus) * dataFactor));
+  const dataFactor = ctx.quality.fresh ? (ctx.quality.missingBars === 0 ? 1 : 0.9) : 0;
+  let confidence =
+    side === 0 ? 0 : Math.max(0, Math.min(1, (ctx.signal.score / 100 + 0.1 * consensus) * dataFactor));
   const vetoes = reports.filter((r) => r.veto).map((r) => `${r.agent}: ${r.veto}`);
+  if (side !== 0 && consensus <= CONFLICT_THRESHOLD)
+    vetoes.push(
+      `ai_judge: agent assessments contradict the ${ctx.proposal?.side} signal (consensus ${consensus.toFixed(2)})`,
+    );
   let llmResult: JudgeResult["llm"] = null;
   if (ctx.proposal && vetoes.length === 0 && llm?.enabled()) {
     try {
@@ -89,7 +97,7 @@ export async function judge(
         timeoutMs,
         (signal) =>
           llm.review(
-            { side: ctx.proposal?.side ?? "", strategyId: ctx.proposal?.strategyId ?? "" },
+            { side: ctx.proposal?.side ?? "", strategyId: ctx.proposal?.model ?? "" },
             reports,
             signal,
           ),
@@ -105,10 +113,10 @@ export async function judge(
     }
   }
   const summary = !ctx.proposal
-    ? "no trade proposal to judge"
+    ? "no trade signal to judge"
     : vetoes.length
-      ? `veto: ${vetoes.join(" | ")}`
-      : `confidence ${confidence.toFixed(2)} (strategy quality ${quality.toFixed(2)}, agent consensus ${consensus >= 0 ? "+" : ""}${consensus.toFixed(2)})`;
+      ? `rejected: ${vetoes.join(" | ")}`
+      : `confidence ${confidence.toFixed(2)} (signal score ${ctx.signal.score}, agent consensus ${consensus >= 0 ? "+" : ""}${consensus.toFixed(2)})`;
   return {
     report: {
       agent: "ai_judge",
@@ -117,10 +125,10 @@ export async function judge(
       confidence,
       summary,
       evidence: [
-        { id: "judge.strategy_quality", label: "strategy quality", value: Math.round(quality * 1000) / 1000 },
+        { id: "judge.signal_score", label: "signal score", value: ctx.signal.score },
         {
           id: "judge.consensus",
-          label: "agent consensus with the proposal",
+          label: "agent consensus with the signal",
           value: Math.round(consensus * 1000) / 1000,
         },
         { id: "judge.data_factor", label: "data-quality factor", value: dataFactor },
@@ -166,11 +174,11 @@ export function agentCatalogue(): {
     })),
     {
       id: "ai_judge",
-      label: "AI Judge Agent",
+      label: "AI Judge",
       responsibility:
-        "Combine strategy quality, agent consensus and data quality into a confidence; apply vetoes; optional LLM review that can only add caution.",
-      inputs: "all specialist reports, the trade proposal, strategy validation statistics",
-      outputs: "confidence and veto list for the decision engine",
+        "Combine the agents' assessments with the signal score, reject contradictory or vetoed signals, and set the confidence. Optional LLM review can only add caution.",
+      inputs: "all agent reports, the strategy signal",
+      outputs: "confidence and the reasons a signal is rejected",
     },
   ];
 }

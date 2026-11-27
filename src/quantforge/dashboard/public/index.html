@@ -1,53 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="tr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0f14">
-  <title>QuantForge AI Pro</title>
+  <title>QuantForge AI</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
 </head>
 <body>
-  <div id="login" class="login hidden">
-    <form id="login-form" class="card login-card">
-      <div class="brand"><span class="logo">◆</span> QuantForge <b>AI Pro</b></div>
-      <p class="muted">Enter the dashboard access token. It was printed by the setup wizard and is stored in <code>~/.quantforge/dashboard-token</code>.</p>
-      <input id="token" type="password" autocomplete="current-password" placeholder="Access token" required>
-      <button type="submit" class="btn primary">Sign in</button>
-      <p id="login-error" class="error"></p>
-    </form>
-  </div>
-
-  <div id="shell" class="shell hidden">
-    <header class="topbar">
-      <button id="menu" type="button" class="icon-btn" aria-label="Menu">☰</button>
-      <div class="brand"><span class="logo">◆</span> QuantForge <b>AI Pro</b></div>
-      <div class="top-right">
-        <span id="mode-badge" class="badge">PAPER</span>
-        <span id="conn" class="dot" title="connection"></span>
-      </div>
-    </header>
-    <nav id="nav" class="nav">
-      <a href="#overview">Overview</a>
-      <a href="#market">Live Market</a>
-      <a href="#agents">AI Agents</a>
-      <a href="#discovery">Strategy Discovery</a>
-      <a href="#lab">Strategy Laboratory</a>
-      <a href="#backtests">Backtesting</a>
-      <a href="#paper">Paper Trading</a>
-      <a href="#history">Trade History</a>
-      <a href="#positions">Open Positions</a>
-      <a href="#risk">Risk Management</a>
-      <a href="#performance">Performance Analytics</a>
-      <a href="#providers">Data Providers</a>
-      <a href="#logs">System Logs</a>
-      <a href="#settings">Settings</a>
-      <a href="#logout" class="muted">Sign out</a>
-    </nav>
-    <main id="view" class="view"></main>
-    <footer class="foot muted"><span id="updated">—</span></footer>
-  </div>
-  <script src="app.js" type="module"></script>
+  <div id="root"></div>
+  <noscript>QuantForge AI paneli JavaScript gerektirir.</noscript>
 </body>
 </html>

@@ -42,15 +42,25 @@ function context(proposal: MarketContext["proposal"] = null): MarketContext {
     },
     quality: { fresh: true, missingBars: 0, staleQuoteBars: 0, ageBars: 0 },
     macro: { eurusd: [], xagusd: [] },
-    strategies: [
-      {
-        id: "S1",
-        family: "disp_cont",
-        score: 3,
-        validation: { expectancyR: 0.3, ciLow: 0.1, trades: 120, dsr: 0.97, testProfitFactor: 1.6 },
-        live: { trades: 0, expectancyR: null },
-      },
-    ],
+    signal: {
+      action: proposal ? (proposal.side === "long" ? "BUY" : "SELL") : "NO_TRADE",
+      barTs: f.ts[i] as number,
+      model: proposal?.model ?? null,
+      side: proposal?.side ?? null,
+      entry: proposal?.entry ?? null,
+      sl: proposal?.sl ?? null,
+      tp: proposal?.tp ?? null,
+      rr: proposal ? 2 : null,
+      score: proposal ? 75 : 0,
+      atr: f.atr[i] as number,
+      regime: "test",
+      allowedModels: ["trend_pullback", "breakout_retest"],
+      evaluations: [],
+      reasons: [],
+      rejected: [],
+      exit: null,
+    },
+    modelPerformance: [],
     account: {
       balance: 1000,
       equity: 1000,
@@ -72,10 +82,10 @@ function context(proposal: MarketContext["proposal"] = null): MarketContext {
 describe("agents", () => {
   it("every specialist returns a bounded, evidence-backed report", () => {
     const reports = runSpecialists(
-      context({ side: "long", strategyId: "S1", entry: 2650, sl: 2645, tp: 2660 }),
+      context({ side: "long", model: "trend_pullback", entry: 2650, sl: 2645, tp: 2660 }),
       2000,
     );
-    assert.equal(reports.length, 9);
+    assert.equal(reports.length, 5);
     for (const r of reports) {
       assert.ok(["ok", "insufficient_data"].includes(r.status), `${r.agent}: ${r.status} ${r.summary}`);
       assert.ok(r.bias >= -1 && r.bias <= 1);
@@ -83,7 +93,7 @@ describe("agents", () => {
       assert.ok(r.summary.length > 0);
     }
     assert.equal(
-      reports.find((r) => r.agent === "macro_intelligence")?.status,
+      reports.find((r) => r.agent === "macro")?.status,
       "insufficient_data",
       "no macro data → no invented view",
     );
@@ -109,13 +119,13 @@ describe("agents", () => {
     assert.equal(r.confidence, 0);
   });
   it("the risk agent vetoes while the kill switch is on", () => {
-    const ctx = context({ side: "long", strategyId: "S1", entry: 2650, sl: 2645, tp: 2660 });
+    const ctx = context({ side: "long", model: "trend_pullback", entry: 2650, sl: 2645, tp: 2660 });
     ctx.controls.killSwitch = { on: true, reason: "test", ts: 1 };
-    const risk = runSpecialists(ctx, 2000).find((r) => r.agent === "risk_management");
+    const risk = runSpecialists(ctx, 2000).find((r) => r.agent === "risk");
     assert.match(risk?.veto ?? "", /kill switch/);
   });
   it("the judge turns any veto into a block and never raises confidence through the LLM", async () => {
-    const ctx = context({ side: "long", strategyId: "S1", entry: 2650, sl: 2645, tp: 2660 });
+    const ctx = context({ side: "long", model: "trend_pullback", entry: 2650, sl: 2645, tp: 2660 });
     // Clear specialist vetoes (the synthetic clock may sit near a market close) so the LLM path is exercised.
     const reports = runSpecialists(ctx, 2000).map((r) => ({ ...r, veto: null }));
     const db = Database.open(":memory:");
@@ -132,11 +142,10 @@ describe("agents", () => {
         };
       },
     });
-    const base = await judge(ctx, reports, 0.7, null, 1000);
+    const base = await judge(ctx, reports, null, 1000);
     const agree = await judge(
       ctx,
       reports,
-      0.7,
       new LlmJudge(
         config,
         "k",
@@ -150,7 +159,6 @@ describe("agents", () => {
     const caution = await judge(
       ctx,
       reports,
-      0.7,
       new LlmJudge(
         config,
         "k",
@@ -164,7 +172,6 @@ describe("agents", () => {
     const veto = await judge(
       ctx,
       reports,
-      0.7,
       new LlmJudge(
         config,
         "k",
@@ -178,7 +185,6 @@ describe("agents", () => {
     const invented = await judge(
       ctx,
       reports,
-      0.7,
       new LlmJudge(
         config,
         "k",
@@ -193,7 +199,6 @@ describe("agents", () => {
     const garbage = await judge(
       ctx,
       reports,
-      0.7,
       new LlmJudge(config, "k", new StateRepo(db), Date.now, fake("not json")),
       1000,
     );

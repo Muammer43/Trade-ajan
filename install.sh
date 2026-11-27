@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# QuantForge AI Pro installer for Android Termux (also works on Linux/macOS with Node.js 22.13+).
+# QuantForge AI installer for Android Termux (also works on Linux/macOS with Node.js 22.13+).
 #   ./install.sh            install dependencies and run the setup wizard
 #   ./install.sh --yes      non-interactive (reads TWELVEDATA_API_KEY from the environment)
 #   ./install.sh --check    only check prerequisites
@@ -16,7 +16,7 @@ for a in "$@"; do
   esac
 done
 
-say "QuantForge AI Pro installer"
+say "QuantForge AI installer"
 say "  app:  $APP_DIR"
 say "  home: $QF_HOME"
 if is_termux; then say "  platform: Android Termux ${TERMUX_VERSION:-}"; else say "  platform: $(uname -s) $(uname -m) (not Termux)"; fi

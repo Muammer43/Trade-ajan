@@ -138,4 +138,15 @@ CREATE TABLE regime_evaluations (
 );
 `,
   },
+  {
+    version: 2,
+    name: "trading strategy: model, score and risk on decisions",
+    sql: `
+ALTER TABLE decisions ADD COLUMN model TEXT;
+ALTER TABLE decisions ADD COLUMN score REAL;
+ALTER TABLE decisions ADD COLUMN risk_pct REAL;
+ALTER TABLE decisions ADD COLUMN components_json TEXT;
+CREATE INDEX idx_positions_model ON positions(strategy_id, status);
+`,
+  },
 ];

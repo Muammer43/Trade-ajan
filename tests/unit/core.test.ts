@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseEnvFile } from "../../src/quantforge/config/load.js";
-import { buildConfig, DEFAULT_CONFIG } from "../../src/quantforge/config/schema.js";
+import { buildConfig, DEFAULT_CONFIG, migrateConfig } from "../../src/quantforge/config/schema.js";
 import { redact, registerSecret } from "../../src/quantforge/core/logger.js";
 import {
   benjaminiHochberg,
@@ -122,23 +122,24 @@ describe("configuration", () => {
   });
   it("applies the conservative risk profile", () => {
     const b = buildConfig({ risk: { profile: "conservative" } });
-    assert.ok("config" in b && b.config.risk.riskPerTradePct === 0.5);
+    assert.ok("config" in b && b.config.risk.riskPerTradePct === 0.25);
     assert.equal(DEFAULT_CONFIG.risk.profile, "balanced");
   });
-  it("applies discovery profiles, letting explicit values win", () => {
-    const relaxed = buildConfig({ discovery: { profile: "relaxed", minDsr: 0, lookbackDays: 1100 } });
-    assert.ok("config" in relaxed);
-    if ("config" in relaxed) {
-      assert.equal(relaxed.config.discovery.fdrQ, 0.3);
-      assert.equal(relaxed.config.discovery.minDsr, 0);
-      assert.equal(relaxed.config.discovery.lookbackDays, 1100);
-    }
-    const strict = buildConfig({});
-    assert.ok(
-      "config" in strict &&
-        strict.config.discovery.profile === "strict" &&
-        strict.config.discovery.minDsr === 0.9,
-    );
+  it("caps the risk per trade at 0.25–1% (balanced default 0.5%)", () => {
+    const d = buildConfig({});
+    assert.ok("config" in d && d.config.risk.riskPerTradePct === 0.5);
+    assert.ok("error" in buildConfig({ risk: { profile: "custom", riskPerTradePct: 1.5 } }));
+    assert.ok("error" in buildConfig({ risk: { profile: "custom", riskPerTradePct: 0.1 } }));
+    assert.ok("config" in buildConfig({ risk: { profile: "custom", riskPerTradePct: 1 } }));
+  });
+  it("migrates a config.json from the earlier version instead of refusing to start", () => {
+    const m = migrateConfig({
+      discovery: { profile: "relaxed" },
+      risk: { riskPerTradePct: 2, profile: "custom" },
+    });
+    assert.equal(m.notes.length, 2);
+    const b = buildConfig(m.raw);
+    assert.ok("config" in b && b.config.risk.riskPerTradePct === 1);
   });
   it("parses env files", () => {
     assert.deepEqual(parseEnvFile("# c\nA=1\nB='two'\n bad line\nC=\"3\""), { A: "1", B: "two", C: "3" });

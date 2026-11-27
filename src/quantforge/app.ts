@@ -1,12 +1,12 @@
-// QuantForge AI Pro application: wires data, intelligence, decision, risk, execution and persistence, and
+// QuantForge AI application: wires data, intelligence, decision, risk, execution and persistence, and
 // runs the jobs the scheduler triggers. Jobs are serialized (one at a time) so a phone's CPU is never asked to
 // run two heavy jobs at once, and every job is idempotent per candle.
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { riskOf } from "../compute/risk.js";
-import { costModelOf } from "./backtest/engine.js";
-import { computeMetrics } from "./backtest/metrics.js";
+import { type BacktestReport, runBacktest } from "./backtest/engine.js";
+import { type ClosedTrade, equityStats, tradeStats } from "./backtest/metrics.js";
 import { type Credentials, loadConfig, loadCredentials, type QfPaths } from "./config/load.js";
 import type { QuantForgeConfig } from "./config/schema.js";
 import { Logger, type SourceLogger } from "./core/logger.js";
@@ -31,17 +31,17 @@ import {
   StateRepo,
 } from "./database/repositories.js";
 import { type Decision, DecisionEngine, saveDecision } from "./decision/engine.js";
-import { runDiscovery } from "./discovery/engine.js";
 import { Ledger } from "./execution/ledger.js";
 import { LiveGate } from "./execution/live-guard.js";
 import { clientOrderId, OrderManager } from "./execution/order-manager.js";
 import { PaperBroker } from "./execution/paper-broker.js";
 import { LlmJudge } from "./intelligence/agents/llm.js";
-import { computeFeatures, type FeatureSet } from "./intelligence/features.js";
-import { classifyAt, evaluateRegimes, trendSeries } from "./intelligence/regime.js";
+import { computeFeatures } from "./intelligence/features.js";
+import { evaluateRegimes } from "./intelligence/regime.js";
 import { HealthMonitor } from "./monitoring/health.js";
 import { RiskEngine } from "./risk/engine.js";
-import { StrategyRegistry } from "./strategy/registry.js";
+import { TradingFrame } from "./strategy/structure.js";
+import { MODEL_LABELS, type ModelId } from "./strategy/types.js";
 
 export type AppOptions = {
   paths: QfPaths;
@@ -74,14 +74,14 @@ export class QuantForgeApp {
   readonly paper: PaperBroker;
   readonly orders: OrderManager;
   readonly risk: RiskEngine;
-  readonly registry: StrategyRegistry;
   readonly decisions: DecisionEngine;
   readonly liveGate: LiveGate;
   readonly monitor = new HealthMonitor();
   readonly llm: LlmJudge;
   private readonly appLog: SourceLogger;
   private queue: Promise<unknown> = Promise.resolve();
-  private discoveryChild: ReturnType<typeof spawn> | null = null;
+  private backtestChild: ReturnType<typeof spawn> | null = null;
+  readonly startedAt: number;
   private listeners = new Set<(event: string, payload: unknown) => void>();
   lastSuccessfulUpdate: number | null = null;
   lastError: string | null = null;
@@ -94,6 +94,7 @@ export class QuantForgeApp {
     opts: AppOptions,
   ) {
     this.now = opts.now ?? Date.now;
+    this.startedAt = this.now();
     this.log = new Logger({ file: paths.logFile, stderr: opts.logToStderr ?? true });
     this.appLog = this.log.child("app");
     this.db = Database.open(opts.dbPath ?? paths.db);
@@ -146,7 +147,6 @@ export class QuantForgeApp {
     );
     this.orders = new OrderManager(this.db, this.paper, PAPER_ACCOUNT, this.log.child("orders"), this.now);
     this.risk = new RiskEngine(config, this.state, this.events, this.now);
-    this.registry = new StrategyRegistry(this.db, this.now);
     this.llm = new LlmJudge(config, creds.llmApiKey, this.state, this.now);
     this.decisions = new DecisionEngine(config, this.risk, this.llm);
     this.liveGate = new LiveGate(config, paths, opts.env ?? process.env, this.now);
@@ -238,7 +238,7 @@ export class QuantForgeApp {
 
   // ----------------------------------------------------------------------------------------- jobs
 
-  /** Ensure enough history exists for regime percentiles and discovery. */
+  /** Ensure enough history exists for indicators, regime percentiles and backtests. */
   async ensureHistory(onProgress?: (m: string) => void): Promise<void> {
     const tfs: [Timeframe, number][] = [
       [this.config.data.monitorTf, this.config.data.backfillDays["5m"]],
@@ -286,54 +286,45 @@ export class QuantForgeApp {
     return { bars: fresh.length, exits };
   }
 
-  /** Features of the latest decision bars (market-open, non-stale). */
-  decisionFeatures(limit = 1600): FeatureSet {
+  /** The trading frame of the latest closed 15-minute candles (market-open, clean). */
+  tradingFrame(limit = 1600): TradingFrame {
     const bars = this.candles
       .latest(CANONICAL, this.config.data.decisionTf, limit)
       .filter((c) => c.marketOpen && c.quality === "ok");
-    return computeFeatures(bars.map(plain), this.config.data.decisionTf);
+    return new TradingFrame(bars.map(plain));
   }
 
-  /** Decision job: the latest closed decision bar → decision → paper order. */
+  /** Decision job: the latest closed 15-minute candle → strategy → agents → risk → paper order. */
   async decisionTick(): Promise<Decision | null> {
     const tf = this.config.data.decisionTf;
     await this.data.sync(tf, { priority: "high" });
     this.lastSuccessfulUpdate = this.now();
-    // Management (break-even, trailing, time exit) for bars since the last decision run.
     const last = this.candles.last(CANONICAL, tf);
     if (!last?.marketOpen || last.quality !== "ok") return null;
     if (!this.processed.claim("decision", tf, last.ts)) return null; // never process a candle twice
-    const f = this.decisionFeatures();
-    if (f.n < f.warmup + 10) {
-      this.appLog.warn(`only ${f.n} usable ${tf} bars; need ${f.warmup + 10} for features`);
+    const frame = this.tradingFrame();
+    if (frame.n < 400) {
+      this.appLog.warn(`only ${frame.n} usable ${tf} candles; the strategy needs at least 400`);
       return null;
     }
-    // Break-even, trailing and time exits for every decision bar since the last run (including bars that
-    // closed while the process was down), each applied once.
+    // Break-even, trailing and time exits for every 15-minute candle since the last run (including candles
+    // that closed while the process was down), each applied once.
     const lastManaged = this.processed.last("manage", tf) ?? last.ts - TF_MS[tf];
-    const spread = this.data.modelledSpread(last.ts + TF_MS[tf]);
     for (const bar of this.candles.range(CANONICAL, tf, lastManaged + 1, last.ts)) {
       if (!bar.marketOpen || bar.quality !== "ok" || !this.processed.claim("manage", tf, bar.ts)) continue;
-      let k = f.n - 1;
-      while (k > 0 && (f.ts[k] as number) > bar.ts) k--;
+      let k = frame.n - 1;
+      while (k > 0 && frame.ts(k) > bar.ts) k--;
       for (const x of this.paper.processDecisionBar(
         bar,
         this.data.modelledSpread(bar.ts + TF_MS[tf]),
-        f.atr[k] as number,
+        frame.atr(k),
       ))
         this.emit("position", x);
     }
-    const trend = trendSeries(f);
-    const regime = classifyAt(f, f.n - 1);
     const quote = this.displayQuote();
     const q = this.data.quality(tf);
     const view = this.ledger.view(quote ?? undefined);
     this.risk.refresh(view);
-    const summaries = this.registry.activeSummaries(PAPER_ACCOUNT);
-    const active = this.registry
-      .activeSpecs()
-      .filter(({ spec }) => spec.tf === tf)
-      .map(({ spec }) => ({ spec, summary: summaries.find((s) => s.id === spec.id) }));
     const macro = {
       eurusd: this.candles.latest("EURUSD", "1h", 200).map(plain),
       xagusd: this.candles.latest("XAGUSD", "1h", 200).map(plain),
@@ -343,9 +334,8 @@ export class QuantForgeApp {
       .some((p) => p.useForTrading && p.enabled && p.state !== "open");
     const decision = await this.decisions.decide({
       now: this.now(),
-      features: f,
-      trend,
-      regime,
+      frame,
+      i: frame.n - 1,
       quote,
       quality: {
         fresh: q.fresh,
@@ -354,14 +344,15 @@ export class QuantForgeApp {
         ageBars: q.ageBars,
       },
       macro,
-      active,
       account: view,
       controls: this.risk.controls(),
       providerHealthy: healthy,
       mode: this.effectiveMode(),
+      modelPerformance: this.ledger.modelPerformance(),
     });
     const id = saveDecision(this.db, decision);
     decision.id = id;
+    const spread = this.data.modelledSpread(last.ts + TF_MS[tf]);
     this.db.run(
       "INSERT INTO market_snapshots(ts, symbol, price, bid, ask, spread, spread_source, provider, regime, features_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
       this.now(),
@@ -372,12 +363,11 @@ export class QuantForgeApp {
       quote?.spread ?? spread,
       quote?.spreadSource ?? "modelled",
       quote?.provider ?? last.provider,
-      regime.label,
+      decision.regime,
       JSON.stringify({
-        slopeT: regime.scores.slopeT,
-        er: regime.scores.efficiency,
-        atrPct: regime.scores.atrPercentile,
-        volRatio: regime.scores.volRatio,
+        model: decision.model,
+        score: decision.score,
+        allowed: decision.signal.allowedModels,
       }),
     );
     if (decision.action !== "NO_TRADE") await this.execute(decision);
@@ -387,19 +377,20 @@ export class QuantForgeApp {
   }
 
   private async execute(d: Decision): Promise<void> {
-    if (!d.spec || !d.lots || d.entry === null || d.sl === null || d.tp === null) return;
+    if (!d.model || !d.exit || !d.lots || d.entry === null || d.sl === null || d.tp === null) return;
     const side = d.action === "BUY" ? "long" : "short";
     const result = await this.orders.submit(
       {
-        clientOrderId: clientOrderId(PAPER_ACCOUNT, d.spec.id, d.barTs, side),
+        // One order per candle: the id is derived from the candle, so a repeated run can never duplicate it.
+        clientOrderId: clientOrderId(PAPER_ACCOUNT, "candle", d.barTs, side),
         side,
         type: "market",
         lots: d.lots,
         sl: d.sl,
         tp: d.tp,
-        strategyId: d.spec.id,
+        strategyId: d.model,
         decisionId: d.id ?? null,
-        meta: { atr: d.atr ?? 0, rules: d.spec.exit, regime: d.regime },
+        meta: { atr: d.atr ?? 0, rules: d.exit, regime: d.regime },
       },
       () => {
         // Final gate, re-evaluated at submission: the mode must be paper (no live adapter exists) and the
@@ -446,68 +437,85 @@ export class QuantForgeApp {
     return { closed, failed };
   }
 
-  /** Run discovery in this process (CLI) — heavy; the daemon uses `spawnDiscovery` instead. */
-  async discoverInline(onProgress?: (m: string) => void): Promise<{
-    runId: number;
-    validated: number;
-    conclusion: string;
-    activated: string[];
-    retired: string[];
-  }> {
-    const tf = this.config.data.decisionTf;
-    const runId = this.registry.startRun(tf);
-    try {
-      // Optionally only the most recent `lookbackDays` of history (0 = everything stored).
-      const lookback = this.config.discovery.lookbackDays;
-      const since = lookback > 0 ? this.now() - lookback * 86_400_000 : 0;
-      const bars = this.candles
-        .latest(CANONICAL, tf, 400_000)
-        .filter((c) => c.ts >= since && c.marketOpen && c.quality === "ok");
-      if (bars.length < 3000)
-        throw new Error(
-          `discovery needs at least 3000 clean ${tf} bars; ${bars.length} stored (run backfill first)`,
-        );
-      const f = computeFeatures(bars.map(plain), tf);
-      const trend = trendSeries(f);
-      const report = runDiscovery(f, trend, this.config, costModelOf(this.config), {
-        ...(onProgress ? { onProgress } : {}),
-      });
-      this.registry.finishRun(runId, report);
-      const applied = this.config.discovery.autoActivate
-        ? this.registry.applyRun(runId, this.config.discovery.maxActive)
-        : { activated: [], retired: [] };
-      this.events.system("info", "discovery", report.conclusion, {
-        runId,
-        validated: report.validated,
-        ...applied,
-      });
-      return { runId, validated: report.validated, conclusion: report.conclusion, ...applied };
-    } catch (error) {
-      this.registry.failRun(runId, errorMessage(error));
-      throw error;
-    }
+  /** Backtest the live rules over stored history in this process (CLI) and store the report. */
+  async backtestInline(
+    days: number,
+    onProgress?: (m: string) => void,
+  ): Promise<{ id: number; report: BacktestReport }> {
+    const to = this.now();
+    const from = to - days * 86_400_000;
+    const warm = from - 30 * 86_400_000;
+    const c15 = this.candles
+      .range(CANONICAL, "15m", warm, to)
+      .filter((c) => c.marketOpen && c.quality === "ok")
+      .map(plain);
+    if (c15.length < 1500)
+      throw new Error(
+        `backtest needs at least 1500 clean 15m candles; ${c15.length} stored (run backfill first)`,
+      );
+    const c5 = this.candles
+      .range(CANONICAL, "5m", from, to)
+      .filter((c) => c.marketOpen && c.quality === "ok")
+      .map(plain);
+    const report = await runBacktest({
+      candles15: c15,
+      candles5: c5,
+      config: this.config,
+      from,
+      to,
+      onProgress: onProgress ? (d, t) => onProgress(`${Math.round((d / Math.max(1, t)) * 100)}%`) : undefined,
+    });
+    const { trades, equity, ...summary } = report;
+    const id = this.db.run(
+      "INSERT INTO backtests(strategy_id, run_id, segment, created_at, params_json, metrics_json, trades_json, equity_json) VALUES (?,?,?,?,?,?,?,?)",
+      "strategy",
+      null,
+      `${days}d`,
+      this.now(),
+      JSON.stringify({
+        days,
+        risk: this.config.risk,
+        strategy: this.config.strategy,
+        costs: this.config.costs,
+        instrument: this.config.instrument,
+      }),
+      JSON.stringify(summary),
+      JSON.stringify(trades.slice(-2000)),
+      JSON.stringify(equity),
+    ).lastId;
+    this.events.system(
+      "info",
+      "backtest",
+      `backtest #${id}: ${report.stats.trades} trades, net ${report.netProfit.toFixed(2)} USD`,
+      { id },
+    );
+    return { id, report };
   }
 
-  /** Discovery in a child process so the daemon and dashboard stay responsive. */
-  spawnDiscovery(): { started: boolean; reason?: string } {
-    if (this.discoveryChild) return { started: false, reason: "a discovery run is already in progress" };
+  /** Backtest in a child process so the daemon and dashboard stay responsive. */
+  spawnBacktest(days: number): { started: boolean; reason?: string } {
+    if (this.backtestChild) return { started: false, reason: "a backtest is already running" };
     const cli = fileURLToPath(new URL("./cli/main.js", import.meta.url));
-    const child = spawn(process.execPath, [cli, "discover", "--quiet"], {
+    const child = spawn(process.execPath, [cli, "backtest", "--days", String(days), "--quiet"], {
       env: process.env,
       stdio: ["ignore", "ignore", "pipe"],
     });
-    this.discoveryChild = child;
+    this.backtestChild = child;
     let err = "";
     child.stderr?.on("data", (d: Buffer) => {
       err = (err + d.toString()).slice(-2000);
     });
     child.on("exit", (code) => {
-      this.discoveryChild = null;
-      if (code === 0) this.appLog.info("discovery finished");
-      else this.appLog.error(`discovery exited with ${code}: ${err.trim().split("\n").slice(-3).join(" ")}`);
-      this.emit("update", { kind: "discovery" });
+      this.backtestChild = null;
+      if (code === 0) this.appLog.info("backtest finished");
+      else this.appLog.error(`backtest exited with ${code}: ${err.trim().split("\n").slice(-3).join(" ")}`);
+      this.emit("update", { kind: "backtest" });
     });
     return { started: true };
+  }
+
+  backtestRunning(): boolean {
+    return this.backtestChild !== null;
   }
 
   private stopStream: (() => void) | null = null;
@@ -543,10 +551,6 @@ export class QuantForgeApp {
     connect();
   }
 
-  discoveryRunning(): boolean {
-    return this.discoveryChild !== null;
-  }
-
   regimeEvaluation(): ReturnType<typeof evaluateRegimes> | null {
     const tf = this.config.data.decisionTf;
     const bars = this.candles.latest(CANONICAL, tf, 40_000).filter((c) => c.marketOpen && c.quality === "ok");
@@ -570,39 +574,29 @@ export class QuantForgeApp {
 
   // ----------------------------------------------------------------------------------------- views
 
+  /** Closed paper trades in the shape the statistics take. */
+  closedTrades(limit = 10_000): ClosedTrade[] {
+    return this.ledger
+      .closedPositions(limit)
+      .reverse()
+      .map((p) => ({
+        side: p.side,
+        model: p.strategy_id ?? "manual",
+        regime: p.regime ?? "unknown",
+        openedAt: p.opened_at,
+        closedAt: p.closed_at ?? p.opened_at,
+        pnl: Math.round((p.realized_pnl - p.commission + p.swap) * 100) / 100,
+        r: p.r_multiple ?? 0,
+        exitReason: p.exit_reason ?? "manual",
+      }));
+  }
+
   performance() {
-    const closed = this.ledger.closedPositions(5000).reverse();
-    const trades = closed.map((p) => ({
-      signalIdx: 0,
-      entryIdx: 0,
-      exitIdx: 0,
-      entryTs: p.opened_at,
-      exitTs: p.closed_at ?? p.opened_at,
-      side: p.side,
-      entry: p.entry_price,
-      stopDist: Math.abs(p.entry_price - p.initial_sl),
-      grossR: 0,
-      costR: 0,
-      netR: p.r_multiple ?? 0,
-      reason: (p.exit_reason ?? "manual") as "manual",
-      barsHeld: p.bars_held,
-      regime: p.regime ?? "unknown",
-      session: 0,
-      mfeR: 0,
-      maeR: 0,
-    }));
-    const m = computeMetrics(trades, { riskFraction: this.config.risk.riskPerTradePct / 100 });
-    const nets = closed.map((p) => p.realized_pnl - p.commission + p.swap);
-    const grossWin = nets.filter((x) => x > 0).reduce((a, b) => a + b, 0);
-    const grossLoss = -nets.filter((x) => x <= 0).reduce((a, b) => a + b, 0);
+    const trades = this.closedTrades();
+    const stats = tradeStats(trades, this.ledger.initialBalance());
     const equity = this.ledger.equityHistory(20_000);
-    let peak = 0;
-    let maxDd = 0;
-    for (const e of equity) {
-      peak = Math.max(peak, e.equity);
-      if (peak > 0) maxDd = Math.max(maxDd, 1 - e.equity / peak);
-    }
-    // Daily closes of equity → the original TradingAgents risk calculator (needs ≥ 20 daily returns).
+    const eq = equityStats(equity);
+    // Daily closes of equity → the original TradingAgents risk calculator (needs ≥ 21 daily values).
     const daily = new Map<string, number>();
     for (const e of equity) daily.set(utcDay(e.ts), e.equity);
     const dailyRisk =
@@ -614,55 +608,42 @@ export class QuantForgeApp {
             perYear: 252,
           })
         : { error: `needs at least 21 days of equity history (${daily.size} so far)` };
-    return {
-      trades: closed.length,
-      wins: nets.filter((x) => x > 0).length,
-      winRate: closed.length ? nets.filter((x) => x > 0).length / closed.length : null,
-      profitFactor: grossLoss > 0 ? grossWin / grossLoss : null,
-      expectancyUsd: closed.length ? nets.reduce((a, b) => a + b, 0) / closed.length : null,
-      expectancyR: closed.length ? m.expectancyR : null,
-      realizedPnl: nets.reduce((a, b) => a + b, 0),
-      maxDrawdownPct: maxDd * 100,
-      byStrategy: Object.entries(
-        closed.reduce<Record<string, number[]>>((acc, p) => {
-          const key = p.strategy_id ?? "manual";
-          if (!acc[key]) acc[key] = [];
-          acc[key].push(p.r_multiple ?? 0);
-          return acc;
-        }, {}),
-      ).map(([id, rs]) => ({
-        id,
-        trades: rs.length,
-        expectancyR: rs.reduce((a, b) => a + b, 0) / rs.length,
-      })),
-      byExit: m.byExit,
-      equity,
-      dailyRisk,
-    };
+    return { stats, equityStats: eq, equity, dailyRisk };
   }
 
   overview() {
     const quote = this.displayQuote();
     const view = this.ledger.view(quote ?? undefined);
-    const perf = this.performance();
+    const trades = this.closedTrades();
+    const stats = tradeStats(trades);
+    const eq = equityStats(this.ledger.equityHistory(20_000));
     const lastDecision = this.db.get<{
       id: number;
       ts: number;
       bar_ts: number;
       action: string;
-      strategy_id: string | null;
+      model: string | null;
       regime: string;
+      score: number | null;
       confidence: number;
       reasons_json: string;
     }>(
-      "SELECT id, ts, bar_ts, action, strategy_id, regime, confidence, reasons_json FROM decisions ORDER BY id DESC LIMIT 1",
+      "SELECT id, ts, bar_ts, action, model, regime, score, confidence, reasons_json FROM decisions ORDER BY id DESC LIMIT 1",
     );
-    const snapshot = this.db.get<{ regime: string; ts: number }>(
-      "SELECT regime, ts FROM market_snapshots ORDER BY id DESC LIMIT 1",
+    const lastSignal = this.db.get<{ bar_ts: number; action: string; model: string | null }>(
+      "SELECT bar_ts, action, model FROM decisions WHERE action<>'NO_TRADE' ORDER BY id DESC LIMIT 1",
     );
+    const snapshot = this.db.get<{ regime: string; ts: number; features_json: string | null }>(
+      "SELECT regime, ts, features_json FROM market_snapshots ORDER BY id DESC LIMIT 1",
+    );
+    const allowed = snapshot?.features_json
+      ? ((JSON.parse(snapshot.features_json) as { allowed?: ModelId[] }).allowed ?? [])
+      : [];
     const controls = this.risk.controls();
     const dayLossPct = view.dayStartEquity > 0 ? (1 - view.equity / view.dayStartEquity) * 100 : 0;
     const openRisk = view.openPositions.reduce((s, p) => s + p.riskUsd, 0);
+    const jobs = this.monitor.report().jobs as Record<string, { ts: number; ok: boolean }>;
+    const lastJob = Math.max(0, ...Object.values(jobs).map((j) => j.ts));
     return {
       symbol: CANONICAL,
       quote,
@@ -670,12 +651,14 @@ export class QuantForgeApp {
       minutesToClose: minutesToClose(this.now()),
       regime: snapshot?.regime ?? null,
       regimeTs: snapshot?.ts ?? null,
-      activeStrategies: this.registry
-        .activeSpecs()
-        .map(({ spec, row }) => ({ id: spec.id, family: spec.family, score: row.score })),
+      activeModel: lastDecision?.model
+        ? { id: lastDecision.model, label: MODEL_LABELS[lastDecision.model as ModelId] ?? lastDecision.model }
+        : null,
+      allowedModels: allowed.map((m) => ({ id: m, label: MODEL_LABELS[m] })),
       lastDecision: lastDecision
         ? { ...lastDecision, reasons: JSON.parse(lastDecision.reasons_json) as string[] }
         : null,
+      lastSignal: lastSignal ?? null,
       mode: this.effectiveMode(),
       requestedMode: this.config.mode,
       account: {
@@ -683,23 +666,27 @@ export class QuantForgeApp {
         balance: view.balance,
         equity: view.equity,
         unrealized: view.unrealized,
-        realizedPnl: perf.realizedPnl,
+        dailyPnl: view.equity - view.dayStartEquity,
+        totalPnl: view.equity - this.ledger.initialBalance(),
+        realizedPnl: stats.netProfit,
         freeMargin: view.freeMargin,
       },
       stats: {
-        trades: perf.trades,
-        winRate: perf.winRate,
-        profitFactor: perf.profitFactor,
-        expectancyUsd: perf.expectancyUsd,
-        expectancyR: perf.expectancyR,
-        maxDrawdownPct: perf.maxDrawdownPct,
+        trades: stats.trades,
+        winRate: stats.trades ? stats.winRate : null,
+        profitFactor: stats.profitFactor,
+        expectancyUsd: stats.expectancyUsd,
+        expectancyR: stats.expectancyR,
+        maxDrawdownPct: eq.maxDrawdownPct,
       },
       openPositions: view.openPositions.length,
+      recentTrades: trades.slice(-5).reverse(),
       risk: {
         dayLossPct,
         maxDailyLossPct: this.config.risk.maxDailyLossPct,
         dailyRiskUsedPct: Math.max(0, (dayLossPct / this.config.risk.maxDailyLossPct) * 100),
         openRiskUsd: openRisk,
+        riskPerTradePct: this.config.risk.riskPerTradePct,
         controls,
       },
       providers: this.router
@@ -710,7 +697,14 @@ export class QuantForgeApp {
         this.lastSuccessfulUpdate ??
         (Math.max(0, ...this.health.summary(0).map((r) => Number(r.last_ok ?? 0))) || null),
       lastError: this.lastError,
-      discoveryRunning: this.discoveryRunning(),
+      bot: {
+        running: true,
+        startedAt: this.startedAt,
+        lastJobAt: lastJob || null,
+        schedulerEnabled: this.config.scheduler.enabled,
+        killSwitch: controls.killSwitch.on,
+        backtestRunning: this.backtestRunning(),
+      },
     };
   }
 
@@ -718,7 +712,7 @@ export class QuantForgeApp {
     const stop = this.stopStream;
     this.stopStream = null;
     stop?.();
-    this.discoveryChild?.kill("SIGTERM");
+    this.backtestChild?.kill("SIGTERM");
     this.monitor.stop();
     this.db.close();
   }

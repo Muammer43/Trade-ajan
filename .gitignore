@@ -9,3 +9,4 @@ dist-bin/
 *.db-wal
 *.db-shm
 QUANTFORGE_AI_PRO_TERMUX.zip
+QUANTFORGE_AI_TERMUX.zip

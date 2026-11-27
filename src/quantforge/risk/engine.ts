@@ -24,6 +24,8 @@ export type Controls = {
   killSwitch: { on: boolean; reason: string | null; ts: number | null };
   circuitBreaker: { until: number | null; reason: string | null };
   cooldownUntil: number | null;
+  /** The loss streak that started the last cooldown; a cooldown re-engages only after a further loss. */
+  cooldownStreak?: number | null;
 };
 
 export type Proposal = {
@@ -124,8 +126,16 @@ export class RiskEngine {
       this.events.risk("weekly_circuit_breaker", "warn", { weekLossPct: weekLoss });
       notes.push(c.circuitBreaker.reason as string);
     }
-    if (account.consecutiveLosses >= r.maxConsecutiveLosses && !(c.cooldownUntil && c.cooldownUntil > now)) {
+    // A win resets the streak (and the record of the last cooldown); a cooldown starts when the streak
+    // reaches the limit and again only after a further loss, never repeatedly for the same streak.
+    if (account.consecutiveLosses < r.maxConsecutiveLosses) c.cooldownStreak = null;
+    if (
+      account.consecutiveLosses >= r.maxConsecutiveLosses &&
+      !(c.cooldownUntil && c.cooldownUntil > now) &&
+      account.consecutiveLosses > (c.cooldownStreak ?? 0)
+    ) {
       c.cooldownUntil = now + r.cooldownHours * 3_600_000;
+      c.cooldownStreak = account.consecutiveLosses;
       this.events.risk("loss_streak_cooldown", "warn", { consecutiveLosses: account.consecutiveLosses });
       notes.push(`${account.consecutiveLosses} consecutive losses: cooldown ${r.cooldownHours}h`);
     }

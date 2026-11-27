@@ -5,13 +5,26 @@ import { silentLogger } from "../../src/quantforge/core/logger.js";
 import type { Quote, StoredCandle } from "../../src/quantforge/core/types.js";
 import { Database } from "../../src/quantforge/database/db.js";
 import { StateRepo } from "../../src/quantforge/database/repositories.js";
-import { exitOf } from "../../src/quantforge/discovery/generator.js";
 import type { BrokerAdapter, OrderRequest } from "../../src/quantforge/execution/broker.js";
 import { Ledger } from "../../src/quantforge/execution/ledger.js";
 import { ARM_PHRASE, LIVE_ENV_PHRASE, LiveGate } from "../../src/quantforge/execution/live-guard.js";
 import { clientOrderId, OrderManager } from "../../src/quantforge/execution/order-manager.js";
 import { PaperBroker } from "../../src/quantforge/execution/paper-broker.js";
+import type { ExitRules } from "../../src/quantforge/strategy/types.js";
 import { tempHome } from "../helpers.js";
+
+const exitOf = (slAtr: number, tpR: number, maxBars: number, managed: boolean): ExitRules =>
+  managed
+    ? {
+        slAtr,
+        tpR,
+        maxBars,
+        breakEvenR: null,
+        partialR: Math.min(1, tpR * 0.6),
+        partialFrac: 0.5,
+        trailAtr: 1.5,
+      }
+    : { slAtr, tpR, maxBars, breakEvenR: null, partialR: null, partialFrac: 0, trailAtr: null };
 
 const T = Date.UTC(2026, 0, 6, 12, 0); // Tuesday, market open
 

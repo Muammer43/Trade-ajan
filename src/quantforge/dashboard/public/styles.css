@@ -453,3 +453,39 @@ pre {
 .hidden {
   display: none;
 }
+
+/* React dashboard additions */
+.card-head {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.card-head h2 {
+  margin: 0;
+}
+.row.spread {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.decision {
+  text-align: right;
+}
+.big {
+  font-size: 28px;
+  font-weight: 800;
+}
+.block {
+  display: block;
+}
+select {
+  width: auto;
+}
+
+.nav button.link {
+  background: none;
+  border: 0;
+  text-align: left;
+  color: var(--muted);
+  padding: 11px 12px;
+  font: inherit;
+  cursor: pointer;
+}

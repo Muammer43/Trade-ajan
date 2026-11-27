@@ -4,20 +4,10 @@
 import type { QuantForgeConfig } from "../../config/schema.js";
 import type { Candle, Quote, Regime, Side, Timeframe } from "../../core/types.js";
 import type { AccountView, Controls } from "../../risk/engine.js";
+import type { ModelId, StrategySignal } from "../../strategy/types.js";
 import type { FeatureSet } from "../features.js";
 
-export const AGENT_IDS = [
-  "quant_research",
-  "macro_intelligence",
-  "market_regime",
-  "strategy_research",
-  "price_action",
-  "volatility",
-  "liquidity",
-  "risk_management",
-  "execution_intelligence",
-  "ai_judge",
-] as const;
+export const AGENT_IDS = ["quant", "macro", "market", "strategy", "risk", "ai_judge"] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
 /** A fact an agent's assessment rests on; `id` is how reports and the AI judge cite it. */
@@ -37,19 +27,8 @@ export type AgentReport = {
   durationMs: number;
 };
 
-export type ActiveStrategy = {
-  id: string;
-  family: string;
-  score: number;
-  validation: {
-    expectancyR: number;
-    ciLow: number | null;
-    trades: number;
-    dsr: number | null;
-    testProfitFactor: number | null;
-  };
-  live: { trades: number; expectancyR: number | null };
-};
+/** Paper results of one trade model, for the Strategy agent's drift check. */
+export type ModelPerformance = { model: ModelId; trades: number; expectancyR: number | null };
 
 export type MarketContext = {
   now: number;
@@ -60,12 +39,14 @@ export type MarketContext = {
   quote: Quote | null;
   quality: { fresh: boolean; missingBars: number; staleQuoteBars: number; ageBars: number };
   macro: { eurusd: Candle[]; xagusd: Candle[] };
-  strategies: ActiveStrategy[];
+  /** The deterministic strategy engine's output for this candle. */
+  signal: StrategySignal;
+  modelPerformance: ModelPerformance[];
   account: AccountView;
   controls: Controls;
   config: QuantForgeConfig;
   providerHealthy: boolean;
-  proposal: { side: Side; strategyId: string; entry: number; sl: number; tp: number } | null;
+  proposal: { side: Side; model: ModelId; entry: number; sl: number; tp: number } | null;
 };
 
 export type AgentDefinition = {

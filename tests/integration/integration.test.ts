@@ -183,8 +183,8 @@ describe("dashboard API", () => {
       "market?tf=4h",
       "agents",
       "decisions",
-      "strategies",
-      "discovery",
+      "signals",
+      "signals?only=trades",
       "backtests",
       "paper",
       "trades",
@@ -201,41 +201,19 @@ describe("dashboard API", () => {
     const o = (await (await fetch(`${base}/api/overview`, { headers: { cookie } })).json()) as {
       account: { balance: number };
       mode: string;
-      activeStrategies: unknown[];
+      bot: { running: boolean };
+      recentTrades: unknown[];
     };
     assert.equal(o.account.balance, 1000);
     assert.equal(o.mode, "paper");
-    assert.equal(o.activeStrategies.length, 0);
+    assert.equal(o.bot.running, true);
+    assert.equal(o.recentTrades.length, 0);
   });
-  it("runs a lab backtest and toggles the kill switch", async () => {
-    const lab = await fetch(`${base}/api/lab/backtest`, {
+  it("validates input and toggles the kill switch", async () => {
+    const bad = await fetch(`${base}/api/backtests/run`, {
       method: "POST",
       headers: { cookie, "x-qf-request": "1" },
-      body: JSON.stringify({
-        family: "streak_fade",
-        params: { n: 4 },
-        session: "all",
-        regime: "any",
-        htfAlign: false,
-        exit: {
-          slAtr: 1.5,
-          tpR: 1.5,
-          maxBars: 16,
-          breakEvenR: null,
-          partialR: null,
-          partialFrac: 0,
-          trailAtr: null,
-        },
-      }),
-    });
-    assert.equal(lab.status, 200);
-    const body = (await lab.json()) as { metrics: { trades: number }; caveat: string };
-    assert.ok(body.metrics.trades > 0);
-    assert.match(body.caveat, /not validation/);
-    const bad = await fetch(`${base}/api/lab/backtest`, {
-      method: "POST",
-      headers: { cookie, "x-qf-request": "1" },
-      body: JSON.stringify({ family: "nope" }),
+      body: JSON.stringify({ days: "many" }),
     });
     assert.equal(bad.status, 400, "invalid input is a client error");
     const ks = await fetch(`${base}/api/risk/kill-switch`, {

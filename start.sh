@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start QuantForge AI Pro in the background (PAPER mode unless every live gate passes).
+# Start QuantForge AI in the background (PAPER mode unless every live gate passes).
 . "$(dirname "$0")/scripts/termux/common.sh"
 if pid="$(running_pid)"; then say "QuantForge is already running (PID $pid)."; exit 0; fi
 [ -f "$PID_FILE" ] && { warn "removing stale PID file"; rm -f "$PID_FILE"; }

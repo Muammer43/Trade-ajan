@@ -54,13 +54,13 @@ and ×2 in the last 30 minutes before a close.
 
 ## Risk (balanced profile defaults)
 
-`riskPerTradePct 1`, `maxDailyLossPct 3`, `maxWeeklyLossPct 6`, `maxDrawdownPct 15` (kill switch),
-`maxOpenPositions 2`, `maxCorrelatedRiskPct 2`, `maxConsecutiveLosses 4` (24 h cooldown), `maxTradesPerDay 5`,
-`maxSpread 0.8`, `maxSlippage 0.5`, ATR percentile band 0.03–0.98, `minRewardRisk 1`, no new trades within
-30 minutes of a close, and positions are flattened before the weekend. `profile: "conservative"` halves the
-risk. Editing risk values from the dashboard sets `profile: "custom"`.
+`riskPerTradePct 0.5` (hard range 0.25–1), `maxDailyLossPct 2`, `maxWeeklyLossPct 4`, `maxDrawdownPct 12` (kill
+switch), `maxOpenPositions 2`, `maxCorrelatedRiskPct 1`, `maxConsecutiveLosses 4` (24 h cooldown, restarted only
+by a further loss), `maxTradesPerDay 5`, `maxSpread 0.8`, `maxSlippage 0.5`, ATR percentile band 0.03–0.98,
+`minRewardRisk 1.5`, no new trades within 30 minutes of a close, positions flattened before the weekend.
+`profile: "conservative"` uses 0.25% per trade. Editing risk values from the dashboard sets `profile: "custom"`.
 
-> With USD 1,000 and 1% risk, the budget is USD 10 per trade. One 0.01 lot loses about USD 1 per USD 1 of
+> With USD 1,000 and 0.5% risk the budget is USD 5 per trade (USD 10 at the 1% maximum). One 0.01 lot loses about USD 1 per USD 1 of
 > stop distance (plus costs). A stop wider than roughly USD 9.4 therefore cannot be sized, and the trade is
 > refused, never oversized.
 
@@ -80,27 +80,23 @@ only agent evidence, must answer in JSON, may cite only existing evidence ids, a
 All endpoints except `/api/health` and `/api/login` need the session cookie. Every POST also needs the
 header `X-QF-Request: 1`.
 
-| Method | Path                                                                                                                                                                                                                                                                                   | Purpose                                    |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| POST   | `/api/login` `{token}` / `/api/logout`                                                                                                                                                                                                                                                 | Session                                    |
-| GET    | `/api/overview`, `/api/market?tf=5m\|15m\|1h\|4h`, `/api/agents`, `/api/decisions`, `/api/strategies[/:id]`, `/api/discovery`, `/api/backtests`, `/api/paper`, `/api/trades`, `/api/positions`, `/api/risk`, `/api/performance`, `/api/providers`, `/api/logs?level=`, `/api/settings` | Page data                                  |
-| GET    | `/api/stream`                                                                                                                                                                                                                                                                          | Server-Sent Events (`update`, `heartbeat`) |
-| POST   | `/api/discovery/run`, `/api/lab/backtest`, `/api/strategies/:id/activate\|deactivate`, `/api/positions/:id/close`, `/api/positions/close-all`, `/api/risk/kill-switch {on, reason, flatten}`, `/api/settings`, `/api/regime/evaluate`, `/api/backup`, `/api/live/arm {phrase}`         | Actions                                    |
+| Method | Path                                                                                                                                                                                                                                                                            | Purpose                                    |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| POST   | `/api/login` `{token}` / `/api/logout`                                                                                                                                                                                                                                          | Session                                    |
+| GET    | `/api/overview`, `/api/market?tf=5m\|15m\|1h\|4h`, `/api/agents`, `/api/decisions`, `/api/signals[?only=trades]`, `/api/backtests[/:id]`, `/api/paper`, `/api/trades`, `/api/positions`, `/api/risk`, `/api/performance`, `/api/providers`, `/api/logs?level=`, `/api/settings` | Page data                                  |
+| GET    | `/api/stream`                                                                                                                                                                                                                                                                   | Server-Sent Events (`update`, `heartbeat`) |
+| POST   | `/api/backtests/run {days}`, `/api/positions/:id/close`, `/api/positions/close-all`, `/api/risk/kill-switch {on, reason, flatten}`, `/api/settings`, `/api/regime/evaluate`, `/api/backup`, `/api/live/arm {phrase}`                                                            | Actions                                    |
 
-## Discovery profiles
-
-`discovery.profile` is `strict` (default) or `relaxed`. Relaxed is exploratory and paper-only: FDR q 0.3,
-DSR ≥ 0.5, lower training/validation thresholds, 70% bootstrap CI, Monte Carlo P(profit) ≥ 0.75. It admits
-more strategies that only looked good by chance. Explicit values override the preset, for example:
+## Strategy (`strategy` section)
 
 ```json
-{
-  "discovery": { "profile": "relaxed", "minDsr": 0, "lookbackDays": 1100 },
-  "data": { "backfillDays": { "15m": 1100 } }
+"strategy": {
+  "minScore": 60, "minRewardRisk": 1.5, "targetR": 2.5, "minStopAtr": 0.4, "maxStopAtr": 2.5,
+  "models": { "trend_pullback": true, "breakout_retest": true, "failed_breakout": true },
+  "management": { "partialAtR": 1, "partialFraction": 0.5, "breakEvenAtR": 1, "trailAtr": 1.5, "maxBars": 32 }
 }
 ```
 
-`lookbackDays` limits discovery to the most recent N days (0 = all stored history). On 2026-11-26 this exact
-setting validated one volatility-compression breakout rule (three exit variants) on 3 years of XAU/USD 15m
-data: positive in train, validation and the untouched holdout, but with DSR 0.19–0.36, so chance cannot be
-ruled out. Its 2×ATR stop (about USD 15) needs about 2% risk at USD 1,000 equity to be tradable at 0.01 lot.
+`risk.riskPerTradePct` is hard-limited to 0.25–1 (default 0.5). A config.json from the earlier version is
+migrated at start-up: the removed `discovery` section is dropped and a higher risk is clamped to 1.
+Rules of each model: [STRATEJI_TR.md](STRATEJI_TR.md).

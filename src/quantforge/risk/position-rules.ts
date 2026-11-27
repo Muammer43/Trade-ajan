@@ -8,7 +8,7 @@
 // Stop changes (break-even, trailing) take effect from the next bar.
 
 import type { Side } from "../core/types.js";
-import type { ExitRules } from "../strategy/spec.js";
+import type { ExitRules } from "../strategy/types.js";
 
 export type ManagedPosition = {
   side: Side;

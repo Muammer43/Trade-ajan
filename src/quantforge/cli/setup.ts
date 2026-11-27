@@ -15,7 +15,7 @@ export async function runSetup(
   const out = (s: string) => process.stdout.write(`${s}\n`);
   mkdirSync(paths.home, { recursive: true, mode: 0o700 });
   mkdirSync(paths.importDir, { recursive: true, mode: 0o700 });
-  out("QuantForge AI Pro — first-run setup");
+  out("QuantForge AI — first-run setup");
   out(`Home: ${paths.home}`);
   const rl = opts.yes ? null : createInterface({ input: process.stdin, output: process.stdout });
   const ask = async (q: string, def: string) => {

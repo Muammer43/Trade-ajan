@@ -3,7 +3,7 @@
 // must be independently testable against tests/unit/broker-contract.test.ts.
 
 import type { Side, TradingMode } from "../core/types.js";
-import type { ExitRules } from "../strategy/spec.js";
+import type { ExitRules } from "../strategy/types.js";
 
 export type OrderType = "market" | "limit" | "stop";
 

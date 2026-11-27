@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// QuantForge AI Pro command line.
+// QuantForge AI command line.
 
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -15,7 +15,7 @@ import { listBackups, restoreBackup } from "../security/backup.js";
 import { runDaemon } from "./daemon.js";
 import { runSetup } from "./setup.js";
 
-const HELP = `QuantForge AI Pro — XAUUSD multi-agent quantitative trading (PAPER mode by default)
+const HELP = `QuantForge AI — automated XAUUSD trading bot (PAPER mode by default)
 
 Usage: quantforge <command> [options]
 
@@ -24,7 +24,7 @@ Usage: quantforge <command> [options]
   status                   process, data, account and strategy status
   doctor                   check Node.js, node:sqlite, paths, permissions and connectivity
   backfill [--tf 15m] [--days N]   fetch history (all configured timeframes when --tf is omitted)
-  discover [--quiet]       run strategy discovery and validation now
+  backtest [--days N]      backtest the live trading rules over stored history (default 365 days)
   regime-eval              evaluate the regime classifier on stored history
   import-csv <file> --tf 15m       import UTC OHLC history from CSV
   backup                   write a database backup
@@ -111,7 +111,7 @@ async function main(argv: string[]): Promise<number> {
             `account: balance ${o.account.balance.toFixed(2)} equity ${o.account.equity.toFixed(2)} USD, ${o.openPositions} open positions, ${o.stats.trades} closed trades`,
           );
           out(
-            `strategies active: ${o.activeStrategies.length ? o.activeStrategies.map((s) => s.id).join(", ") : "none"}`,
+            `regime: ${o.regime ?? "—"}; last model: ${o.activeModel?.label ?? "—"}; risk per trade ${o.risk.riskPerTradePct}%`,
           );
           out(
             `kill switch: ${o.risk.controls.killSwitch.on ? `ON (${o.risk.controls.killSwitch.reason})` : "off"}`,
@@ -143,21 +143,45 @@ async function main(argv: string[]): Promise<number> {
         }
         return 0;
       });
-    case "discover": {
+    case "backtest": {
       const quiet = args.includes("--quiet");
-      const lock = await Lock.acquire(`${paths.home}/discovery.lock`);
+      const days = Number(flag(args, "--days") ?? 365);
+      if (!Number.isFinite(days) || days < 7) {
+        out("usage: quantforge backtest [--days N] (N ≥ 7)");
+        return 1;
+      }
+      const lock = await Lock.acquire(`${paths.home}/backtest.lock`);
       if (!(lock instanceof Lock)) {
-        process.stderr.write("a discovery run is already in progress\n");
+        process.stderr.write("a backtest is already running\n");
         return 2;
       }
       try {
         return await withApp(
           paths,
           async (app) => {
-            const r = await app.discoverInline(quiet ? undefined : out);
-            out(r.conclusion);
+            const { id, report: r } = await app.backtestInline(
+              days,
+              quiet ? undefined : (m) => out(`progress ${m}`),
+            );
+            const s = r.stats;
+            const f = (x: number | null | undefined, d = 2) =>
+              x === null || x === undefined ? "—" : x.toFixed(d);
             out(
-              `run ${r.runId}: ${r.validated} validated; activated: ${r.activated.join(", ") || "none"}; retired: ${r.retired.join(", ") || "none"}`,
+              `backtest #${id}: ${new Date(r.period.from).toISOString().slice(0, 10)} → ${new Date(r.period.to).toISOString().slice(0, 10)}, ${r.candles} candles`,
+            );
+            out(
+              `net profit ${f(r.netProfit)} USD (${f(r.returnPct)}%), trades ${s.trades}, win rate ${f(s.winRate * 100, 1)}%, PF ${f(s.profitFactor)}, expectancy ${f(s.expectancyR, 3)} R / ${f(s.expectancyUsd)} USD`,
+            );
+            out(
+              `max drawdown ${f(r.equityStats.maxDrawdownPct)}%, Sharpe ${f(r.equityStats.sharpe)}, Sortino ${f(r.equityStats.sortino)}`,
+            );
+            out(
+              `long ${s.long.trades} (${f(s.long.netProfit)} USD), short ${s.short.trades} (${f(s.short.netProfit)} USD)`,
+            );
+            for (const [m, g] of Object.entries(s.byModel))
+              out(`  ${m}: ${g.trades} trades, ${f(g.netProfit)} USD, E ${f(g.expectancyR, 3)} R`);
+            out(
+              `signals ${r.signals.generated}, executed ${r.signals.executed}, refused: ${JSON.stringify(r.signals.refused)}`,
             );
             return 0;
           },

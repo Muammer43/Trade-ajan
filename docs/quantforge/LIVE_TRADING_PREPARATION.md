@@ -37,8 +37,8 @@ applies the same limits plus `live.maxLots`.
 
 ## Before real money
 
-- The strategy must have stayed consistent with its validation on paper (the Strategy Research agent vetoes
-  a strategy whose paper expectancy has broken from validation).
-- Re-run discovery on the latest data. An edge that disappears should not be traded.
+- The strategy must have a positive record on paper over months (the Strategy agent stops a model whose paper
+  expectancy falls below −0.3R after 20 trades). The backtest in BACKTEST_RAPORU.md is not profitable.
+- Re-run the backtest on the latest data. A strategy whose results have broken down should not be traded.
 - Keep the phone on power, the battery unrestricted, and a watchdog (`healthcheck.sh --restart`) running.
   Prefer server-side stops at the broker, because a phone can lose connectivity.

@@ -1,15 +1,15 @@
 # Paper Trading
 
 Paper mode is the default and the only mode that can execute in this release. It trades a separate account
-(`paper`, USD 1,000 by default) against **real** Twelve Data prices and never contacts a broker.
+(`paper`, USD 1,000 by default, 0.5% risk per trade) against **real** Twelve Data prices and never contacts a broker.
 
 ## How a paper trade happens
 
 1. A 15-minute candle closes. The scheduler fetches it about 20 s later (`closeLagMs`) and claims it once.
-2. Features, regime and signals of the **active** strategies are computed. Only strategies that passed every
-   validation gate can be active.
-3. Ten agents report. The AI Judge computes a confidence (strategy quality + agent consensus, scaled down
-   for data quality). Any veto, or a confidence below `decision.minConfidence`, means NO_TRADE.
+2. The regime picks which of the three trade models may run; their setups are evaluated and scored
+   (STRATEJI_TR.md). No qualifying setup means NO_TRADE.
+3. Five agents report and the AI Judge computes a confidence (signal score + agent consensus, scaled down for
+   data quality). Any veto, a contradiction, or a confidence below `decision.minConfidence` means NO_TRADE.
 4. The risk engine checks every limit and sizes the position. Any failure means NO_TRADE, with each reason
    stored.
 5. The order manager creates an idempotent order and the paper broker fetches a fresh price (1 API credit).

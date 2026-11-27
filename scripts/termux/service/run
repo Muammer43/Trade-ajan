@@ -3,6 +3,6 @@
 #   mkdir -p $PREFIX/var/service/quantforge && cp scripts/termux/service/run $PREFIX/var/service/quantforge/run
 #   sv-enable quantforge
 # runit restarts the daemon if it exits. Edit APP to your install directory.
-APP="$HOME/QUANTFORGE_AI_PRO"
+APP="$HOME/QUANTFORGE_AI"
 cd "$APP" || exit 1
 exec node --disable-warning=ExperimentalWarning dist/quantforge/cli/main.js run 2>&1

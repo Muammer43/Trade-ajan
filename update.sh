@@ -2,7 +2,7 @@
 # Update QuantForge: backup, fetch the new version (git pull or a release ZIP), reinstall dependencies,
 # rebuild if needed and restart if it was running. Database migrations run automatically at start.
 #   ./update.sh                  git pull --ff-only (in a git checkout)
-#   ./update.sh <release.zip>    unpack a new QUANTFORGE_AI_PRO_TERMUX.zip over this directory
+#   ./update.sh <release.zip>    unpack a new QUANTFORGE_AI_TERMUX.zip over this directory
 . "$(dirname "$0")/scripts/termux/common.sh"
 was_running=0
 if running_pid >/dev/null; then was_running=1; fi
@@ -26,7 +26,7 @@ if [ $# -ge 1 ]; then
   tmp="$(mktemp -d)"
   unzip -q "$1" -d "$tmp" || die "could not unpack $1"
   src="$tmp"
-  [ -d "$tmp/QUANTFORGE_AI_PRO" ] && src="$tmp/QUANTFORGE_AI_PRO"
+  for d in QUANTFORGE_AI QUANTFORGE_AI_PRO; do [ -d "$tmp/$d" ] && src="$tmp/$d"; done
   cp -R "$src"/. "$APP_DIR"/ || die "copy failed"
   rm -rf "$tmp"
   # Release archives ship a prebuilt dist/: runtime dependencies only.
@@ -37,7 +37,7 @@ elif [ -d .git ]; then
   npm ci --ignore-scripts --no-audit --no-fund || die "npm ci failed"
   npm run build:portable || die "build failed"
 else
-  die "not a git checkout; pass a release ZIP: ./update.sh QUANTFORGE_AI_PRO_TERMUX.zip"
+  die "not a git checkout; pass a release ZIP: ./update.sh QUANTFORGE_AI_TERMUX.zip"
 fi
 say "Updated."
 [ "$was_running" = 1 ] && "$APP_DIR/start.sh"

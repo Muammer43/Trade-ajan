@@ -5,7 +5,11 @@
 import { mean, stdev } from "../../core/stats.js";
 import { minutesToClose, nextCloseIsWeekend, sessionOf } from "../../core/time.js";
 import type { Candle } from "../../core/types.js";
-import type { AgentDefinition, Evidence, MarketContext } from "./types.js";
+import { MODEL_LABELS } from "../../strategy/types.js";
+import type { AgentDefinition, AgentReport, Evidence, MarketContext } from "./types.js";
+
+/** A building block of the composite agents below (the former single-purpose analysts). */
+type Block = Omit<AgentDefinition, "id"> & { id: string };
 
 const clamp = (x: number, lo = -1, hi = 1) => Math.min(hi, Math.max(lo, x));
 const r4 = (x: number) => (Number.isFinite(x) ? Math.round(x * 1e4) / 1e4 : null);
@@ -32,7 +36,7 @@ export function varianceRatio(ret: ArrayLike<number>, end: number, n: number, q:
   return v1 > 0 ? vq / (q * v1) : Number.NaN;
 }
 
-const quantResearch: AgentDefinition = {
+const quantResearch: Block = {
   id: "quant_research",
   label: "Quant Research Agent",
   responsibility:
@@ -94,7 +98,7 @@ function returnsOf(c: readonly Candle[]): number[] {
   return out;
 }
 
-const macroIntelligence: AgentDefinition = {
+const macroIntelligence: Block = {
   id: "macro_intelligence",
   label: "Macro Intelligence Agent",
   responsibility:
@@ -147,7 +151,7 @@ const macroIntelligence: AgentDefinition = {
   },
 };
 
-const marketRegime: AgentDefinition = {
+const marketRegime: Block = {
   id: "market_regime",
   label: "Market Regime Agent",
   responsibility:
@@ -182,61 +186,6 @@ const marketRegime: AgentDefinition = {
   },
 };
 
-const strategyResearch: AgentDefinition = {
-  id: "strategy_research",
-  label: "Strategy Research Agent",
-  responsibility: "Track validated strategies and whether their paper results still match their validation.",
-  inputs: "active strategies with validation statistics and their paper-trade outcomes",
-  outputs: "strategy health; veto when a strategy's live results have broken from validation",
-  run(ctx) {
-    if (!ctx.strategies.length)
-      return {
-        bias: 0,
-        confidence: 1,
-        summary: "no validated strategy is active: the system has no statistically supported edge to trade",
-        evidence: [{ id: "strategy.active_count", label: "active strategies", value: 0 }],
-        veto: ctx.proposal ? "no active validated strategy" : null,
-      };
-    const evidence: Evidence[] = [
-      { id: "strategy.active_count", label: "active strategies", value: ctx.strategies.length },
-    ];
-    let veto: string | null = null;
-    for (const s of ctx.strategies) {
-      evidence.push({
-        id: `strategy.${s.id}.validation_expectancy`,
-        label: `${s.id} validated expectancy (R)`,
-        value: r4(s.validation.expectancyR),
-      });
-      evidence.push({
-        id: `strategy.${s.id}.paper_trades`,
-        label: `${s.id} paper trades`,
-        value: s.live.trades,
-      });
-      if (s.live.expectancyR !== null)
-        evidence.push({
-          id: `strategy.${s.id}.paper_expectancy`,
-          label: `${s.id} paper expectancy (R)`,
-          value: r4(s.live.expectancyR),
-        });
-      // Drift: after 15 paper trades, an expectancy below −0.25R is inconsistent with a validated positive edge.
-      if (
-        ctx.proposal?.strategyId === s.id &&
-        s.live.trades >= 15 &&
-        s.live.expectancyR !== null &&
-        s.live.expectancyR < -0.25
-      )
-        veto = `${s.id} paper expectancy ${s.live.expectancyR.toFixed(2)}R after ${s.live.trades} trades contradicts its validation`;
-    }
-    return {
-      bias: 0,
-      confidence: 0.7,
-      summary: `${ctx.strategies.length} validated strategies active`,
-      evidence,
-      veto,
-    };
-  },
-};
-
 /** Swing pivots (fractal of `k` bars each side) in the last `n` bars. */
 function pivots(ctx: MarketContext, n: number, k: number) {
   const f = ctx.features;
@@ -255,7 +204,7 @@ function pivots(ctx: MarketContext, n: number, k: number) {
   return { highs, lows };
 }
 
-const priceAction: AgentDefinition = {
+const priceAction: Block = {
   id: "price_action",
   label: "Price Action Agent",
   responsibility:
@@ -310,7 +259,7 @@ const priceAction: AgentDefinition = {
   },
 };
 
-const volatility: AgentDefinition = {
+const volatility: Block = {
   id: "volatility",
   label: "Volatility Agent",
   responsibility: "Assess volatility level, clustering and expansion; refuse trading in extreme volatility.",
@@ -343,7 +292,7 @@ const volatility: AgentDefinition = {
   },
 };
 
-const liquidity: AgentDefinition = {
+const liquidity: Block = {
   id: "liquidity",
   label: "Liquidity Analysis Agent",
   responsibility: "Locate liquidity pools (equal highs/lows, recent extremes), detect sweeps and traps.",
@@ -394,7 +343,7 @@ const liquidity: AgentDefinition = {
   },
 };
 
-const riskManagement: AgentDefinition = {
+const riskManagement: Block = {
   id: "risk_management",
   label: "Risk Management Agent",
   responsibility: "Report account risk usage and active protections (advisory; the risk engine enforces).",
@@ -431,7 +380,7 @@ const riskManagement: AgentDefinition = {
   },
 };
 
-const executionIntelligence: AgentDefinition = {
+const executionIntelligence: Block = {
   id: "execution_intelligence",
   label: "Execution Intelligence Agent",
   responsibility:
@@ -470,25 +419,169 @@ const executionIntelligence: AgentDefinition = {
   },
 };
 
-export const SPECIALISTS: readonly AgentDefinition[] = [
-  quantResearch,
-  macroIntelligence,
-  marketRegime,
-  strategyResearch,
-  priceAction,
-  volatility,
-  liquidity,
-  riskManagement,
-  executionIntelligence,
-];
+type Part = ReturnType<Block["run"]>;
 
-/** Weights of directional agents in the judge's consensus. */
-export const DIRECTIONAL_WEIGHTS: Partial<Record<string, number>> = {
-  quant_research: 1,
-  market_regime: 1,
-  price_action: 1,
-  liquidity: 0.75,
-  macro_intelligence: 0.5,
+/** Merge building-block outputs into one agent report body (confidence-weighted lean, all evidence, first veto). */
+function merge(parts: { part: Part; weight: number }[]): Part {
+  let num = 0;
+  let den = 0;
+  let conf = 0;
+  let confW = 0;
+  const evidence: Evidence[] = [];
+  const summaries: string[] = [];
+  let veto: string | null = null;
+  let allInsufficient = true;
+  for (const { part, weight } of parts) {
+    if (part.status !== "insufficient_data") allInsufficient = false;
+    num += weight * part.confidence * part.bias;
+    den += weight * part.confidence;
+    conf += weight * part.confidence;
+    confW += weight;
+    evidence.push(...part.evidence);
+    summaries.push(part.summary);
+    veto ??= part.veto;
+  }
+  return {
+    ...(allInsufficient ? { status: "insufficient_data" as const } : {}),
+    bias: den > 0 ? clamp(num / den) : 0,
+    confidence: confW > 0 ? conf / confW : 0,
+    summary: summaries.join(" · "),
+    evidence,
+    veto,
+  };
+}
+
+const quant: AgentDefinition = {
+  id: "quant",
+  label: "Quant Agent",
+  responsibility:
+    "Evaluate numeric market conditions: drift and momentum over several windows, serial dependence of returns, distance from the mean.",
+  inputs: "15m returns, ATR, z-score, variance ratio",
+  outputs: "momentum lean with confidence",
+  run: (ctx) => quantResearch.run(ctx),
 };
 
+const macro: AgentDefinition = {
+  id: "macro",
+  label: "Macro Agent",
+  responsibility:
+    "Evaluate the dollar and macro conditions that move gold. Without data it produces no view, never a guess.",
+  inputs:
+    "EUR/USD hourly (USD proxy), XAG/USD hourly when the data plan has it; no rates or economic-calendar feed is connected",
+  outputs: "macro tailwind/headwind for gold, or insufficient data",
+  run(ctx) {
+    const out = macroIntelligence.run(ctx);
+    return {
+      ...out,
+      evidence: [
+        ...out.evidence,
+        {
+          id: "macro.calendar",
+          label: "economic calendar / rates feed",
+          value: "not connected (no view taken)",
+        },
+      ],
+    };
+  },
+};
+
+const market: AgentDefinition = {
+  id: "market",
+  label: "Market Agent",
+  responsibility:
+    "Determine the market regime and price structure, find liquidity pools and sweeps, and judge whether execution conditions (session, spread, time to close, data freshness) allow a trade.",
+  inputs: "regime classifier, swing structure, liquidity pools, quote and market calendar",
+  outputs: "regime/structure lean; veto when execution conditions are unsafe",
+  run: (ctx) =>
+    merge([
+      { part: marketRegime.run(ctx), weight: 1 },
+      { part: priceAction.run(ctx), weight: 1 },
+      { part: liquidity.run(ctx), weight: 0.75 },
+      { part: executionIntelligence.run(ctx), weight: 0.5 },
+    ]),
+};
+
+const strategy: AgentDefinition = {
+  id: "strategy",
+  label: "Strategy Agent",
+  responsibility:
+    "Decide which of the three trade models the regime allows, report the active model's setup and score, and stop a model whose paper results have broken down.",
+  inputs:
+    "strategy-engine evaluation of Trend Pullback, Breakout + Retest and Failed Breakout; paper results per model",
+  outputs: "active model, its score and components; veto on model drift",
+  run(ctx) {
+    const sig = ctx.signal;
+    const evidence: Evidence[] = [
+      {
+        id: "strategy.allowed_models",
+        label: "models allowed by the regime",
+        value: sig.allowedModels.map((m) => MODEL_LABELS[m]).join(", ") || "none",
+      },
+      { id: "strategy.action", label: "strategy engine decision", value: sig.action },
+    ];
+    for (const e of sig.evaluations) {
+      evidence.push({
+        id: `strategy.${e.model}.score`,
+        label: `${MODEL_LABELS[e.model]} score`,
+        value: e.triggered ? e.score : null,
+      });
+      if (!e.triggered)
+        evidence.push({
+          id: `strategy.${e.model}.rejection`,
+          label: `${MODEL_LABELS[e.model]} not triggered`,
+          value: e.rejection,
+        });
+    }
+    let veto: string | null = null;
+    if (sig.model) {
+      const perf = ctx.modelPerformance.find((m) => m.model === sig.model);
+      if (perf) {
+        evidence.push({
+          id: "strategy.model_paper_trades",
+          label: "paper trades of this model",
+          value: perf.trades,
+        });
+        evidence.push({
+          id: "strategy.model_paper_expectancy_r",
+          label: "paper expectancy of this model (R)",
+          value: perf.expectancyR === null ? null : r4(perf.expectancyR),
+        });
+        // Drift guard: after 20 paper trades, an expectancy below −0.3R stops the model until reviewed.
+        if (perf.trades >= 20 && perf.expectancyR !== null && perf.expectancyR < -0.3)
+          veto = `${MODEL_LABELS[sig.model]} paper expectancy ${perf.expectancyR.toFixed(2)}R after ${perf.trades} trades`;
+      }
+    }
+    const bias = sig.side === "long" ? sig.score / 100 : sig.side === "short" ? -sig.score / 100 : 0;
+    return {
+      bias,
+      confidence: sig.model ? 0.8 : 0.5,
+      summary: sig.model
+        ? `${MODEL_LABELS[sig.model]} ${sig.side} setup, score ${sig.score}`
+        : `no qualifying setup (${sig.allowedModels.length ? `allowed: ${sig.allowedModels.map((m) => MODEL_LABELS[m]).join(", ")}` : "no model allowed in this regime"})`,
+      evidence,
+      veto,
+    };
+  },
+};
+
+const risk: AgentDefinition = {
+  id: "risk",
+  label: "Risk Agent",
+  responsibility:
+    "Check the trade against account risk usage, active protections and the volatility band (advisory; the deterministic risk engine enforces every limit).",
+  inputs: "equity marks, open risk, loss streak, kill switch, circuit breakers, ATR percentile",
+  outputs: "risk summary; veto while a protection is engaged or volatility is outside the band",
+  run: (ctx) =>
+    merge([
+      { part: riskManagement.run(ctx), weight: 1 },
+      { part: volatility.run(ctx), weight: 0.5 },
+    ]),
+};
+
+export const SPECIALISTS: readonly AgentDefinition[] = [quant, macro, market, strategy, risk];
+
+/** Weights of directional agents in the judge's consensus. */
+export const DIRECTIONAL_WEIGHTS: Partial<Record<string, number>> = { quant: 1, market: 1, macro: 0.5 };
+
+export type { AgentReport };
 export { mean, sideSign };

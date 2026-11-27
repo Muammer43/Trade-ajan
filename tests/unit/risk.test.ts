@@ -153,6 +153,11 @@ describe("risk engine", () => {
     assert.equal(risk.controls().circuitBreaker.until, null, "the breaker clears the next day");
     risk.refresh(account({ consecutiveLosses: 4 }));
     assert.ok(risk.controls().cooldownUntil);
+    advance(25 * 3_600_000);
+    risk.refresh(account({ consecutiveLosses: 4 }));
+    assert.equal(risk.controls().cooldownUntil, null, "the same losing streak does not restart the cooldown");
+    risk.refresh(account({ consecutiveLosses: 5 }));
+    assert.ok(risk.controls().cooldownUntil, "a further loss does");
     risk.refresh(account({ equity: 8400, peakEquity: 10_000, dayStartEquity: 8400, weekStartEquity: 8400 }));
     assert.equal(risk.controls().killSwitch.on, true);
     assert.ok(events.recentRisk(10).some((e) => e.kind === "max_drawdown"));

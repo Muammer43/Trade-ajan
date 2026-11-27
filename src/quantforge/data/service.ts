@@ -3,13 +3,13 @@
 
 import type { QuantForgeConfig } from "../config/schema.js";
 import type { SourceLogger } from "../core/logger.js";
-import { minutesToClose, sessionOf } from "../core/time.js";
 import { type Quote, type StoredCandle, TF_MS, type Timeframe } from "../core/types.js";
 import type { CandleRepo } from "../database/repositories.js";
 import type { Priority } from "./budget.js";
 import { flagStaleQuotes, normalizeBars, qualityReport } from "./normalize.js";
 import { resample } from "./resample.js";
 import type { ProviderRouter } from "./router.js";
+import { modelledSpread } from "./spread.js";
 
 export const CANONICAL = "XAUUSD";
 
@@ -192,11 +192,7 @@ export class MarketDataService {
    * minutes before a market close (×2), when dealer spreads on gold are known to widen.
    */
   modelledSpread(ts: number): number {
-    let s = this.config.costs.spread;
-    if (sessionOf(ts) === "asia") s *= 1.3;
-    const toClose = minutesToClose(ts);
-    if (toClose > 0 && toClose <= 30) s *= 2;
-    return Math.round(s * 100) / 100;
+    return modelledSpread(this.config, ts);
   }
 
   /** A price pushed by a streaming connection (bid/ask modelled unless the stream publishes them). */

@@ -42,7 +42,7 @@ export const configSchema = z
           .strict(),
         backfillDays: z
           .object({
-            "5m": z.number().int().min(1).max(120),
+            "5m": z.number().int().min(1).max(180),
             "15m": z.number().int().min(30).max(2000),
             "1h": z.number().int().min(30).max(3000),
           })
@@ -84,7 +84,8 @@ export const configSchema = z
       .object({
         profile: z.enum(["conservative", "balanced", "custom"]),
         initialBalance: positive,
-        riskPerTradePct: z.number().min(0.05).max(5),
+        /** Hard-capped at 1% per trade. */
+        riskPerTradePct: z.number().min(0.25).max(1),
         maxDailyLossPct: pct,
         maxWeeklyLossPct: pct,
         maxDrawdownPct: pct,
@@ -106,34 +107,27 @@ export const configSchema = z
     decision: z
       .object({ minConfidence: z.number().min(0).max(1), maxSignalAgeBars: z.number().int().min(0).max(4) })
       .strict(),
-    discovery: z
+    strategy: z
       .object({
-        trainFrac: z.number().min(0.3).max(0.8),
-        validFrac: z.number().min(0.1).max(0.4),
-        minTrainTrades: z.number().int().min(10),
-        minValidTrades: z.number().int().min(5),
-        minTestTrades: z.number().int().min(3),
-        fdrQ: z.number().min(0.001).max(0.5),
-        minDsr: z.number().min(0).max(1),
-        mcIterations: z.number().int().min(100).max(20_000),
-        maxActive: z.number().int().min(0).max(10),
-        autoActivate: z.boolean(),
-        intervalDays: z.number().min(1).max(90),
-        walkForwardFolds: z.number().int().min(2).max(10),
-        /** "strict" (default) or "relaxed" (exploratory: more false positives; paper only). */
-        profile: z.enum(["strict", "relaxed", "custom"]),
-        trainMinExpectancyR: z.number().min(0).max(2),
-        trainMinProfitFactor: z.number().min(1).max(5),
-        maxTopTradeShare: z.number().min(0.05).max(1),
-        validMinProfitFactor: z.number().min(1).max(5),
-        wfMinPositiveFrac: z.number().min(0).max(1),
-        minStability: z.number().min(0).max(1),
-        costStressMultiplier: z.number().min(1).max(3),
-        minMcProbProfit: z.number().min(0.5).max(1),
-        /** Two-sided alpha of the expectancy bootstrap CI whose lower bound must exceed zero. */
-        ciAlpha: z.number().min(0.01).max(0.5),
-        /** Use only the most recent N days of history for discovery (0 = all stored history). */
-        lookbackDays: z.number().int().min(0).max(5000),
+        /** Minimum signal score (0–100) for a setup to become a trade proposal. */
+        minScore: z.number().min(0).max(100),
+        minRewardRisk: z.number().min(1).max(10),
+        /** Default target in R when no opposing S/R zone is closer. */
+        targetR: z.number().min(1).max(10),
+        minStopAtr: z.number().min(0.1).max(5),
+        maxStopAtr: z.number().min(0.2).max(10),
+        models: z
+          .object({ trend_pullback: z.boolean(), breakout_retest: z.boolean(), failed_breakout: z.boolean() })
+          .strict(),
+        management: z
+          .object({
+            partialAtR: z.number().min(0.25).max(10).nullable(),
+            partialFraction: z.number().min(0.1).max(0.9),
+            breakEvenAtR: z.number().min(0.25).max(10).nullable(),
+            trailAtr: z.number().min(0.25).max(10).nullable(),
+            maxBars: z.number().int().min(1).max(500),
+          })
+          .strict(),
       })
       .strict(),
     agents: z
@@ -219,7 +213,7 @@ export const DEFAULT_CONFIG: QuantForgeConfig = {
     decisionTf: "15m",
     monitorTf: "5m",
     apiBudget: { perMinute: 8, perDay: 800, reserve: 60 },
-    backfillDays: { "5m": 15, "15m": 365, "1h": 1095 },
+    backfillDays: { "5m": 30, "15m": 365, "1h": 1095 },
     closeLagMs: 20_000,
     staleAfterBars: 3,
     macroSymbols: ["EUR/USD", "XAG/USD"],
@@ -245,12 +239,12 @@ export const DEFAULT_CONFIG: QuantForgeConfig = {
   risk: {
     profile: "balanced",
     initialBalance: 1000,
-    riskPerTradePct: 1,
-    maxDailyLossPct: 3,
-    maxWeeklyLossPct: 6,
-    maxDrawdownPct: 15,
+    riskPerTradePct: 0.5,
+    maxDailyLossPct: 2,
+    maxWeeklyLossPct: 4,
+    maxDrawdownPct: 12,
     maxOpenPositions: 2,
-    maxCorrelatedRiskPct: 2,
+    maxCorrelatedRiskPct: 1,
     maxConsecutiveLosses: 4,
     cooldownHours: 24,
     maxTradesPerDay: 5,
@@ -258,36 +252,20 @@ export const DEFAULT_CONFIG: QuantForgeConfig = {
     maxSlippage: 0.5,
     minAtrPercentile: 0.03,
     maxAtrPercentile: 0.98,
-    minRewardRisk: 1,
+    minRewardRisk: 1.5,
     noTradeMinutesBeforeClose: 30,
     closeBeforeWeekend: true,
     maxMarginUsePct: 50,
   },
   decision: { minConfidence: 0.55, maxSignalAgeBars: 1 },
-  discovery: {
-    trainFrac: 0.6,
-    validFrac: 0.2,
-    minTrainTrades: 30,
-    minValidTrades: 12,
-    minTestTrades: 8,
-    fdrQ: 0.1,
-    minDsr: 0.9,
-    mcIterations: 1000,
-    maxActive: 3,
-    autoActivate: true,
-    intervalDays: 7,
-    walkForwardFolds: 4,
-    profile: "strict",
-    trainMinExpectancyR: 0.05,
-    trainMinProfitFactor: 1.15,
-    maxTopTradeShare: 0.35,
-    validMinProfitFactor: 1.05,
-    wfMinPositiveFrac: 0.6,
-    minStability: 0.6,
-    costStressMultiplier: 1.5,
-    minMcProbProfit: 0.9,
-    ciAlpha: 0.1,
-    lookbackDays: 0,
+  strategy: {
+    minScore: 60,
+    minRewardRisk: 1.5,
+    targetR: 2.5,
+    minStopAtr: 0.4,
+    maxStopAtr: 2.5,
+    models: { trend_pullback: true, breakout_retest: true, failed_breakout: true },
+    management: { partialAtR: 1, partialFraction: 0.5, breakEvenAtR: 1, trailAtr: 1.5, maxBars: 32 },
   },
   agents: {
     timeoutMs: 2000,
@@ -307,63 +285,24 @@ export const DEFAULT_CONFIG: QuantForgeConfig = {
 /** Risk presets. `custom` keeps whatever values the file sets. */
 export const RISK_PROFILES: Record<"conservative" | "balanced", Partial<QuantForgeConfig["risk"]>> = {
   conservative: {
-    riskPerTradePct: 0.5,
-    maxDailyLossPct: 2,
-    maxWeeklyLossPct: 4,
-    maxDrawdownPct: 10,
+    riskPerTradePct: 0.25,
+    maxDailyLossPct: 1.5,
+    maxWeeklyLossPct: 3,
+    maxDrawdownPct: 8,
     maxOpenPositions: 1,
-    maxCorrelatedRiskPct: 1,
+    maxCorrelatedRiskPct: 0.5,
     maxConsecutiveLosses: 3,
     maxTradesPerDay: 3,
   },
   balanced: {
-    riskPerTradePct: 1,
-    maxDailyLossPct: 3,
-    maxWeeklyLossPct: 6,
-    maxDrawdownPct: 15,
+    riskPerTradePct: 0.5,
+    maxDailyLossPct: 2,
+    maxWeeklyLossPct: 4,
+    maxDrawdownPct: 12,
     maxOpenPositions: 2,
-    maxCorrelatedRiskPct: 2,
+    maxCorrelatedRiskPct: 1,
     maxConsecutiveLosses: 4,
     maxTradesPerDay: 5,
-  },
-};
-
-/**
- * Discovery gate presets. "relaxed" is exploratory: it lets weaker, less certain candidates through and so
- * admits more strategies that only looked good by chance. Use it in paper mode only.
- */
-export const DISCOVERY_PROFILES: Record<"strict" | "relaxed", Partial<QuantForgeConfig["discovery"]>> = {
-  strict: {
-    minTrainTrades: 30,
-    minValidTrades: 12,
-    minTestTrades: 8,
-    fdrQ: 0.1,
-    minDsr: 0.9,
-    trainMinExpectancyR: 0.05,
-    trainMinProfitFactor: 1.15,
-    maxTopTradeShare: 0.35,
-    validMinProfitFactor: 1.05,
-    wfMinPositiveFrac: 0.6,
-    minStability: 0.6,
-    costStressMultiplier: 1.5,
-    minMcProbProfit: 0.9,
-    ciAlpha: 0.1,
-  },
-  relaxed: {
-    minTrainTrades: 20,
-    minValidTrades: 8,
-    minTestTrades: 5,
-    fdrQ: 0.3,
-    minDsr: 0.5,
-    trainMinExpectancyR: 0.02,
-    trainMinProfitFactor: 1.05,
-    maxTopTradeShare: 0.5,
-    validMinProfitFactor: 1.0,
-    wfMinPositiveFrac: 0.5,
-    minStability: 0.4,
-    costStressMultiplier: 1.25,
-    minMcProbProfit: 0.75,
-    ciAlpha: 0.3,
   },
 };
 
@@ -380,6 +319,29 @@ export function deepMerge<T>(base: T, override: unknown): T {
 }
 
 /** Merge a partial config over the defaults, apply the risk profile, and validate. */
+/**
+ * Bring a config.json written by an earlier version up to date: drop sections that no longer exist
+ * (the former strategy-discovery settings) and clamp the per-trade risk into the hard 0.25–1% range.
+ */
+export function migrateConfig(raw: unknown): { raw: unknown; notes: string[] } {
+  if (!isPlain(raw)) return { raw, notes: [] };
+  const out: Plain = structuredClone(raw);
+  const notes: string[] = [];
+  if ("discovery" in out) {
+    delete out.discovery;
+    notes.push("removed the obsolete 'discovery' section (strategy discovery is no longer part of the bot)");
+  }
+  if (isPlain(out.risk) && typeof out.risk.riskPerTradePct === "number") {
+    const v = out.risk.riskPerTradePct;
+    const clamped = Math.min(1, Math.max(0.25, v));
+    if (clamped !== v) {
+      out.risk = { ...out.risk, riskPerTradePct: clamped };
+      notes.push(`risk.riskPerTradePct ${v} is outside the allowed 0.25–1% range; using ${clamped}`);
+    }
+  }
+  return { raw: out, notes };
+}
+
 export function buildConfig(partial: unknown): { config: QuantForgeConfig } | { error: string } {
   const merged = deepMerge(structuredClone(DEFAULT_CONFIG), partial ?? {});
   const profile = (merged as QuantForgeConfig).risk?.profile;
@@ -391,22 +353,13 @@ export function buildConfig(partial: unknown): { config: QuantForgeConfig } | { 
       ...explicit,
     };
   }
-  const dprofile = (merged as QuantForgeConfig).discovery?.profile;
-  if (dprofile === "strict" || dprofile === "relaxed") {
-    const explicit = isPlain(partial) && isPlain(partial.discovery) ? partial.discovery : {};
-    (merged as QuantForgeConfig).discovery = {
-      ...(merged as QuantForgeConfig).discovery,
-      ...DISCOVERY_PROFILES[dprofile],
-      ...explicit,
-    };
-  }
   const parsed = configSchema.safeParse(merged);
   if (!parsed.success) {
     return { error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
   }
   const c = parsed.data;
-  if (c.discovery.trainFrac + c.discovery.validFrac >= 0.95)
-    return { error: "discovery: trainFrac + validFrac must leave a test segment" };
+  if (c.strategy.minStopAtr >= c.strategy.maxStopAtr)
+    return { error: "strategy: minStopAtr must be below maxStopAtr" };
   if (c.risk.minAtrPercentile >= c.risk.maxAtrPercentile)
     return { error: "risk: minAtrPercentile must be below maxAtrPercentile" };
   const loopback =

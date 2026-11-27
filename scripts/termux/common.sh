@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for the QuantForge AI Pro shell scripts (Android Termux and plain Linux).
+# Shared helpers for the QuantForge AI shell scripts (Android Termux and plain Linux).
 # POSIX-friendly bash: no systemd, no root, no Docker.
 
 set -u

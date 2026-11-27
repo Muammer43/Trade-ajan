@@ -64,7 +64,7 @@ export async function runDaemon(
     app.log.log(
       "info",
       "daemon",
-      `QuantForge AI Pro started — effective mode ${live.effectiveMode.toUpperCase()} (requested ${app.config.mode})`,
+      `QuantForge AI started — effective mode ${live.effectiveMode.toUpperCase()} (requested ${app.config.mode})`,
     );
     if (!opts.noDashboard) {
       const { token, created } = await loadOrCreateToken(paths.dashboardToken);

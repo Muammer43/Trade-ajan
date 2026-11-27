@@ -5,7 +5,6 @@
 //   macro     hourly cross-asset bars                                       ~2 API credits
 //   history   once at start-up when history is missing (low priority)
 //   daily     backup, pruning and regime evaluation (backupHourUtc)
-//   discovery in a child process when the last run is older than discovery.intervalDays
 // No API call is made while the market is closed except an hourly check. No LLM runs on a tick.
 
 import type { QuantForgeApp } from "../app.js";
@@ -17,7 +16,7 @@ export class Scheduler {
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
   private running: Promise<unknown> | null = null;
-  private last = { monitor: 0, decision: 0, macro: 0, daily: "", closedCheck: 0, discoveryCheck: 0 };
+  private last = { monitor: 0, decision: 0, macro: 0, daily: "", closedCheck: 0 };
   private historyDone = false;
   private failures = 0;
 
@@ -112,21 +111,6 @@ export class Scheduler {
         app.events.prune(t - 30 * 86_400_000);
         app.regimeEvaluation();
       });
-    }
-    if (cfg.scheduler.enabled && t - this.last.discoveryCheck >= 3_600_000) {
-      this.last.discoveryCheck = t;
-      const lastRun = app.registry.lastFinishedRun();
-      const due = !lastRun || t - lastRun.finished_at >= cfg.discovery.intervalDays * 86_400_000;
-      const quiet = !isMarketOpenAt(t) || app.ledger.openPositions().length === 0;
-      if (
-        due &&
-        quiet &&
-        !app.discoveryRunning() &&
-        app.candles.count("XAUUSD", cfg.data.decisionTf) >= 3000
-      ) {
-        const r = app.spawnDiscovery();
-        if (r.started) ran.push("discovery");
-      }
     }
     return ran;
   }

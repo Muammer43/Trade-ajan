@@ -9,7 +9,7 @@ import type { Database } from "../database/db.js";
 import type { StateRepo } from "../database/repositories.js";
 import type { AccountView } from "../risk/engine.js";
 import type { ManagedPosition } from "../risk/position-rules.js";
-import type { ExitRules } from "../strategy/spec.js";
+import type { ExitRules, ModelId } from "../strategy/types.js";
 
 export type PositionRow = {
   id: number;
@@ -312,6 +312,16 @@ export class Ledger {
         limit,
       )
       .reverse();
+  }
+
+  /** Paper results per trade model (closed positions), for the Strategy agent's drift guard. */
+  modelPerformance(): { model: ModelId; trades: number; expectancyR: number | null }[] {
+    return this.db
+      .all<{ model: string; n: number; e: number | null }>(
+        "SELECT strategy_id AS model, COUNT(*) AS n, AVG(r_multiple) AS e FROM positions WHERE account=? AND status='closed' AND strategy_id IS NOT NULL GROUP BY strategy_id",
+        this.account,
+      )
+      .map((r) => ({ model: r.model as ModelId, trades: Number(r.n), expectancyR: r.e }));
   }
 
   transactions(limit = 200): Record<string, unknown>[] {

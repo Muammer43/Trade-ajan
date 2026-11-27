@@ -8,21 +8,16 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { QuantForgeApp } from "../app.js";
-import { costModelOf } from "../backtest/engine.js";
 import { jsonSafe } from "../backtest/metrics.js";
 import { saveConfig } from "../config/load.js";
 import { buildConfig } from "../config/schema.js";
 import { isTimeframe } from "../core/types.js";
 import { CANONICAL } from "../data/service.js";
-import { plain } from "../database/repositories.js";
-import { backtestSpec } from "../discovery/engine.js";
 import { ARM_PHRASE } from "../execution/live-guard.js";
 import { agentCatalogue } from "../intelligence/agents/runner.js";
-import { computeFeatures } from "../intelligence/features.js";
-import { trendSeries } from "../intelligence/regime.js";
 import { parseCookies, RateLimiter, SessionStore, tokensEqual } from "../security/auth.js";
 import { listBackups } from "../security/backup.js";
-import { describeSpec, FAMILIES, makeSpec, type StrategySpec } from "../strategy/spec.js";
+import { MODEL_LABELS } from "../strategy/types.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -248,41 +243,51 @@ export class DashboardServer {
         });
       }
       case "GET /api/decisions":
+      case "GET /api/signals": {
+        const only = url.searchParams.get("only");
+        const rows =
+          only === "trades"
+            ? app.db.all(
+                "SELECT * FROM decisions WHERE action<>'NO_TRADE' OR (model IS NOT NULL AND score > 0) ORDER BY id DESC LIMIT ?",
+                limit,
+              )
+            : app.db.all("SELECT * FROM decisions ORDER BY id DESC LIMIT ?", limit);
         return this.json(
           res,
           200,
-          app.db.all("SELECT * FROM decisions ORDER BY id DESC LIMIT ?", limit).map((d) => ({
+          rows.map((d) => ({
             ...d,
+            modelLabel:
+              typeof d.model === "string"
+                ? ((MODEL_LABELS as Record<string, string>)[d.model] ?? d.model)
+                : null,
             reasons: parseJsonCol(d.reasons_json, []),
             rejected: parseJsonCol(d.rejected_json, []),
             risk: parseJsonCol(d.risk_json, null),
+            evaluations: parseJsonCol(d.components_json, []),
           })),
         );
-      case "GET /api/strategies":
-        return this.json(
-          res,
-          200,
-          app.registry.list({ limit }).map((s) => this.strategyView(s)),
-        );
-      case "GET /api/discovery":
-        return this.json(res, 200, {
-          running: app.discoveryRunning(),
-          runs: app.registry.runs(20).map((r) => ({ ...r, summary: parseJsonCol(r.summary_json, null) })),
-        });
-      case "POST /api/discovery/run":
-        return this.json(res, 200, app.spawnDiscovery());
+      }
       case "GET /api/backtests":
-        return this.json(
-          res,
-          200,
-          app.registry.backtests(limit).map((b) => ({
-            ...b,
-            params: parseJsonCol(b.params_json, {}),
-            metrics: parseJsonCol(b.metrics_json, {}),
-          })),
-        );
-      case "POST /api/lab/backtest":
-        return this.json(res, 200, await this.labBacktest(await readJson(req)));
+        return this.json(res, 200, {
+          running: app.backtestRunning(),
+          runs: app.db
+            .all(
+              "SELECT id, segment, created_at, params_json, metrics_json FROM backtests WHERE strategy_id='strategy' ORDER BY id DESC LIMIT ?",
+              limit,
+            )
+            .map((b) => ({
+              id: b.id,
+              segment: b.segment,
+              created_at: b.created_at,
+              params: parseJsonCol(b.params_json, {}),
+              report: parseJsonCol(b.metrics_json, {}),
+            })),
+        });
+      case "POST /api/backtests/run": {
+        const body = z.object({ days: z.number().int().min(7).max(3000) }).parse(await readJson(req));
+        return this.json(res, 200, app.spawnBacktest(body.days));
+      }
       case "GET /api/paper":
         return this.json(res, 200, {
           account: app.overview().account,
@@ -367,23 +372,25 @@ export class DashboardServer {
       case "POST /api/backup":
         return this.json(res, 200, { file: await app.backup() });
       default: {
-        const m = /^\/api\/(strategies|positions)\/([\w-]+)(?:\/(activate|deactivate|close))?$/.exec(path);
-        if (m && m[1] === "strategies" && method === "GET") {
-          const s = app.registry.get(m[2] as string);
-          if (!s) throw new HttpError(404, "unknown strategy");
+        const bt = /^\/api\/backtests\/(\d+)$/.exec(path);
+        if (bt && method === "GET") {
+          const row = app.db.get<Record<string, unknown>>(
+            "SELECT * FROM backtests WHERE id=?",
+            Number(bt[1]),
+          );
+          if (!row) throw new HttpError(404, "unknown backtest");
           return this.json(res, 200, {
-            ...this.strategyView(s),
-            backtests: app.db.all(
-              "SELECT id, segment, created_at, metrics_json FROM backtests WHERE strategy_id=? ORDER BY id DESC LIMIT 20",
-              s.id,
-            ),
+            id: row.id,
+            created_at: row.created_at,
+            params: parseJsonCol(row.params_json, {}),
+            report: parseJsonCol(row.metrics_json, {}),
+            trades: parseJsonCol(row.trades_json, []),
+            equity: parseJsonCol(row.equity_json, []),
           });
         }
-        if (m && m[1] === "strategies" && method === "POST" && (m[3] === "activate" || m[3] === "deactivate"))
-          return this.json(res, 200, app.registry.setStatus(m[2] as string, m[3] === "activate"));
-        if (m && m[1] === "positions" && method === "POST" && m[3] === "close") {
-          const id = Number(m[2]);
-          if (!Number.isInteger(id)) throw new HttpError(400, "invalid position id");
+        const m = /^\/api\/positions\/(\d+)\/close$/.exec(path);
+        if (m && method === "POST") {
+          const id = Number(m[1]);
           return this.json(
             res,
             200,
@@ -395,89 +402,6 @@ export class DashboardServer {
     }
   }
 
-  private strategyView(s: ReturnType<QuantForgeApp["registry"]["list"]>[number]) {
-    const spec = parseJsonCol<StrategySpec | null>(s.spec_json, null);
-    return {
-      ...s,
-      spec,
-      rules: spec ? describeSpec(spec) : null,
-      metrics: parseJsonCol(s.metrics_json, null),
-      validation: parseJsonCol(s.validation_json, null),
-      rejection: parseJsonCol(s.rejection_json, []),
-    };
-  }
-
-  private async labBacktest(raw: unknown) {
-    const schema = z.object({
-      family: z.enum(FAMILIES),
-      params: z.record(z.string(), z.number().finite()),
-      session: z.enum(["all", "london_ny", "asia"]),
-      regime: z.enum(["any", "trending", "ranging", "not_strong"]),
-      htfAlign: z.boolean(),
-      exit: z.object({
-        slAtr: z.number().min(0.25).max(10),
-        tpR: z.number().min(0.25).max(20),
-        maxBars: z.number().int().min(1).max(500),
-        breakEvenR: z.number().min(0).max(10).nullable(),
-        partialR: z.number().min(0.1).max(10).nullable(),
-        partialFrac: z.number().min(0).max(0.9),
-        trailAtr: z.number().min(0.1).max(10).nullable(),
-      }),
-      costMultiplier: z.number().min(0).max(5).optional(),
-    });
-    const body = schema.parse(raw);
-    const app = this.opts.app;
-    const tf = app.config.data.decisionTf;
-    return app.serial("lab-backtest", async () => {
-      const bars = app.candles
-        .latest(CANONICAL, tf, 60_000)
-        .filter((c) => c.marketOpen && c.quality === "ok");
-      if (bars.length < 800) throw new HttpError(409, `not enough ${tf} history (${bars.length} bars)`);
-      const f = computeFeatures(bars.map(plain), tf);
-      const trend = trendSeries(f);
-      const spec = makeSpec({
-        family: body.family,
-        tf,
-        params: body.params,
-        session: body.session,
-        regime: body.regime,
-        htfAlign: body.htfAlign,
-        exit: body.exit,
-      });
-      const { trades, metrics } = backtestSpec(
-        spec,
-        f,
-        trend,
-        app.config,
-        costModelOf(app.config, body.costMultiplier ?? 1),
-      );
-      let eq = app.config.risk.initialBalance;
-      const curve = trades.map((t) => {
-        eq *= 1 + (app.config.risk.riskPerTradePct / 100) * t.netR;
-        return { ts: t.exitTs, equity: Math.round(eq * 100) / 100 };
-      });
-      const id = app.registry.saveBacktest({
-        strategyId: spec.id,
-        runId: null,
-        segment: "lab_full_history",
-        params: spec,
-        metrics,
-        trades: trades.slice(-500),
-        equity: curve,
-      });
-      return {
-        id,
-        spec,
-        rules: describeSpec(spec),
-        metrics,
-        equity: curve,
-        trades: trades.slice(-100),
-        caveat:
-          "A lab backtest uses the full history, which mixes in-sample and out-of-sample periods. It is exploration, not validation: only the discovery pipeline can validate and activate a strategy.",
-      };
-    });
-  }
-
   private async updateSettings(raw: unknown) {
     const app = this.opts.app;
     const patch = z
@@ -486,6 +410,7 @@ export class DashboardServer {
         decision: z.record(z.string(), z.unknown()).optional(),
         costs: z.record(z.string(), z.unknown()).optional(),
         instrument: z.record(z.string(), z.unknown()).optional(),
+        strategy: z.record(z.string(), z.unknown()).optional(),
       })
       .strict()
       .parse(raw);
@@ -495,6 +420,7 @@ export class DashboardServer {
       decision: { ...app.config.decision, ...(patch.decision ?? {}) },
       costs: { ...app.config.costs, ...(patch.costs ?? {}) },
       instrument: { ...app.config.instrument, ...(patch.instrument ?? {}) },
+      strategy: { ...app.config.strategy, ...(patch.strategy ?? {}) },
     });
     if ("error" in built) throw new HttpError(400, built.error);
     await saveConfig(app.paths, built.config);
@@ -503,7 +429,7 @@ export class DashboardServer {
       saved: true,
       hash,
       restartRequired: true,
-      note: "Saved to config.json. Restart QuantForge (./restart.sh) to apply; running limits are unchanged until then.",
+      note: "config.json kaydedildi. Uygulamak için ./restart.sh çalıştırın; o zamana kadar mevcut limitler geçerli.",
     };
   }
 

@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["es2023", "dom", "dom.iterable"], "types": [], "noEmit": true },
+  "include": ["src/quantforge/dashboard/web"],
+  "exclude": []
+}

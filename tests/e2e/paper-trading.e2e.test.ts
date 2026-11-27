@@ -1,6 +1,6 @@
-// End-to-end: a complete QuantForge application on a replayed market with a planted edge. History backfill →
-// discovery and validation → activation → scheduler-driven paper trading over simulated days → a crash and
-// restart → a network outage → consistency checks of every ledger, order and decision.
+// End-to-end: the complete bot on a replayed market. History backfill → scheduler-driven decisions at every
+// closed 15-minute candle → paper orders, positions, stops/targets → a crash and restart → a network outage →
+// consistency checks of every ledger, order and decision.
 
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
@@ -13,13 +13,13 @@ const DAY = 86_400_000;
 describe("end-to-end paper trading", () => {
   const home = tempHome();
   after(() => home.cleanup());
-  const market = syntheticMarket({ days: 200, seed: 77, edge: 0.85 });
-  const clock = new Clock(T0 + 185 * DAY + 3 * 3_600_000);
+  const market = syntheticMarket({ days: 75, seed: 77 });
+  const clock = new Clock(T0 + 55 * DAY + 3 * 3_600_000);
   const provider = new ReplayProvider(market, clock);
   const config = testConfig((c) => {
-    c.scheduler.enabled = false; // no child-process discovery or backups inside the test
-    c.discovery.mcIterations = 300;
-    c.risk.initialBalance = 1000;
+    c.scheduler.enabled = false; // no backups inside the test
+    // A larger paper balance so that 0.5% risk can size the minimum lot on this synthetic market.
+    c.risk.initialBalance = 10_000;
   });
   const providers = [
     {
@@ -55,16 +55,12 @@ describe("end-to-end paper trading", () => {
   }
 
   let app: QuantForgeApp;
-  it("backfills history and validates the planted strategy through every gate", async () => {
+  it("backfills history", async () => {
     app = await make();
     await app.recover();
     await app.ensureHistory();
-    assert.ok(app.candles.count("XAUUSD", "15m") > 10_000);
-    const r = await app.discoverInline();
-    assert.ok(r.validated >= 1, r.conclusion);
-    assert.ok(r.activated.length >= 1 && r.activated.length <= config.discovery.maxActive);
-    const active = app.registry.activeSpecs();
-    assert.ok(active.every(({ row }) => JSON.parse(row.rejection_json ?? "[]").length === 0));
+    assert.ok(app.candles.count("XAUUSD", "15m") > 3000);
+    assert.ok(app.candles.count("XAUUSD", "5m") > 3000);
   });
 
   it("trades on paper from scheduler ticks, with decisions, orders, positions and a consistent ledger", async () => {
@@ -92,7 +88,7 @@ describe("end-to-end paper trading", () => {
     assert.equal(o.stats.trades, closed.length, "dashboard statistics come from stored trades");
     assert.equal(o.mode, "paper");
     const agentRows = app.db.all("SELECT DISTINCT agent FROM agent_reports");
-    assert.equal(agentRows.length, 10, "all ten agents reported");
+    assert.equal(agentRows.length, 6, "all six agents reported");
   });
 
   it("recovers after an unclean stop without duplicating candles, decisions or orders", async () => {
@@ -127,7 +123,7 @@ describe("end-to-end paper trading", () => {
     assert.ok(events.length > 0, "the outage was logged");
     provider.down = false;
     const before = app.candles.count("XAUUSD", "5m");
-    await runFor(app, 1 * DAY);
+    await runFor(app, 3 * DAY); // spans the weekend into the next trading session
     assert.ok(app.candles.count("XAUUSD", "5m") > before + 250, "missed bars were fetched after the outage");
     assert.equal(app.data.quality("5m").missingBars, 0, "no gaps remain");
     assert.ok(app.ledger.verify().ok);

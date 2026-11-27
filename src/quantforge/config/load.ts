@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { readPrivate, writeAtomic, writePrivate } from "../../store/private-file.js";
 import { registerSecret } from "../core/logger.js";
-import { buildConfig, DEFAULT_CONFIG, type QuantForgeConfig } from "./schema.js";
+import { buildConfig, DEFAULT_CONFIG, migrateConfig, type QuantForgeConfig } from "./schema.js";
 
 export type QfPaths = {
   home: string;
@@ -52,7 +52,9 @@ export function loadConfig(paths: QfPaths): QuantForgeConfig {
   } catch (error) {
     throw new Error(`config.json is not valid JSON: ${(error as Error).message}`);
   }
-  const built = buildConfig(raw);
+  const migrated = migrateConfig(raw);
+  for (const note of migrated.notes) process.stderr.write(`config.json: ${note}\n`);
+  const built = buildConfig(migrated.raw);
   if ("error" in built) throw new Error(`config.json is invalid: ${built.error}`);
   return built.config;
 }
